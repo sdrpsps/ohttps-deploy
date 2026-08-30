@@ -1,0 +1,30 @@
+services:
+  web:
+    build: .
+    command: node server.js
+    env_file: .env
+    volumes:
+      - ssl_data:/app/data
+      - ssl_certs:/app/certs
+      - ssl_logs:/app/logs
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      - worker
+  worker:
+    build: .
+    command: node --import tsx app/worker.ts
+    env_file: .env
+    volumes:
+      - ssl_data:/app/data
+      - ssl_certs:/app/certs
+      - ssl_logs:/app/logs
+volumes:
+  ssl_data:
+  ssl_certs:
+  ssl_logs:
