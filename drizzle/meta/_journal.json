@@ -15,6 +15,13 @@
       "when": 1788137287400,
       "tag": "0001_fresh_micromax",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788200000000,
+      "tag": "0002_phase4_automation",
+      "breakpoints": true
     }
   ]
 }

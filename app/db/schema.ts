@@ -98,6 +98,10 @@ export const logs = sqliteTable("logs", {
 export const notifications = sqliteTable("notifications", {
   id: text("id").primaryKey(),
   eventId: text("event_id").notNull(),
+  eventType: text("event_type").notNull(),
+  objectType: text("object_type").notNull(),
+  objectId: text("object_id"),
+  payloadJson: text("payload_json").notNull(),
   channel: text("channel").notNull().default("webhook"),
   status: text("status", { enum: ["pending", "delivered", "failed"] }).notNull().default("pending"),
   attempts: integer("attempts").notNull().default(0),
@@ -107,6 +111,18 @@ export const notifications = sqliteTable("notifications", {
   deliveredAt: integer("delivered_at", { mode: "timestamp_ms" }),
   ...timestamps,
 }, (table) => ({ eventUnique: uniqueIndex("notifications_event_channel_idx").on(table.eventId, table.channel) }));
+
+export const certificateSyncJobs = sqliteTable("certificate_sync_jobs", {
+  id: text("id").primaryKey(),
+  certificateId: text("certificate_id").notNull().references(() => certificates.id),
+  trigger: text("trigger", { enum: ["manual", "scheduled"] }).notNull(),
+  force: integer("force", { mode: "boolean" }).notNull().default(false),
+  status: text("status", { enum: ["queued", "running", "succeeded", "failed", "cancelled"] }).notNull().default("queued"),
+  errorSummary: text("error_summary"),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }),
+  finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+  ...timestamps,
+}, (table) => ({ syncJobStatusIdx: index("certificate_sync_jobs_status_idx").on(table.status) }));
 
 export const auditEvents = sqliteTable("audit_events", {
   id: text("id").primaryKey(),

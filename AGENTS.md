@@ -1,4 +1,4 @@
-# SSL Deploy 项目协作与实现规范
+# ohttps-deploy 项目协作与实现规范
 
 ## 1. 项目目标
 

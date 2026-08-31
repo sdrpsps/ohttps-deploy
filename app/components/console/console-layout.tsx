@@ -146,7 +146,7 @@ function WorkerStatus() {
           </span>
         </div>
         <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          Worker 会轮询并执行已创建的部署任务。
+          Worker 会轮询并执行证书同步与部署任务。
         </p>
       </CardContent>
     </Card>

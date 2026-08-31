@@ -5,5 +5,5 @@ export default {
   schema: "./app/db/schema.ts",
   out: "./drizzle",
   dialect: "sqlite",
-  dbCredentials: { url: process.env.DATABASE_URL ?? "./data/ssl-deploy.db" },
+  dbCredentials: { url: process.env.DATABASE_URL ?? "./data/ohttps-deploy.db" },
 } satisfies Config;

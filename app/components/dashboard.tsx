@@ -13,6 +13,7 @@ import { DeleteDialog } from "@/components/console/delete-dialog";
 import { OverviewPanel } from "@/components/console/overview-panel";
 import { ServerFormDialog } from "@/components/console/server-form-dialog";
 import { ServerPanel } from "@/components/console/server-panel";
+import { SettingsDialog, type SettingsSummary } from "@/components/console/settings-dialog";
 import { SshKeyDialog } from "@/components/console/ssh-key-dialog";
 import { daysUntil } from "@/lib/utils";
 import type {
@@ -37,12 +38,13 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const router = useRouter();
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [servers, setServers] = useState<ManagedServer[]>([]);
-  const [sharedKeyConfigured, setSharedKeyConfigured] = useState(false);
+  const [settings, setSettings] = useState<SettingsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [certificateDialogOpen, setCertificateDialogOpen] = useState(false);
   const [serverDialogOpen, setServerDialogOpen] = useState(false);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
   const [editingServer, setEditingServer] = useState<ManagedServer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -50,17 +52,17 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   async function load() {
     setLoading(true);
     try {
-      const [certificateResponse, serverResponse, keyResponse] = await Promise.all([
+      const [certificateResponse, serverResponse, settingsResponse] = await Promise.all([
         fetch("/api/certificates", { cache: "no-store" }),
         fetch("/api/servers", { cache: "no-store" }),
-        fetch("/api/settings/ssh-private-key", { cache: "no-store" }),
+        fetch("/api/settings", { cache: "no-store" }),
       ]);
-      if (!certificateResponse.ok || !serverResponse.ok || !keyResponse.ok) {
+      if (!certificateResponse.ok || !serverResponse.ok || !settingsResponse.ok) {
         throw new Error("无法加载控制台数据");
       }
       setCertificates((await certificateResponse.json()).data);
       setServers((await serverResponse.json()).data);
-      setSharedKeyConfigured((await keyResponse.json()).data.configured);
+      setSettings((await settingsResponse.json()).data);
     } finally {
       setLoading(false);
     }
@@ -186,7 +188,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         navigation={navigation}
         loading={loading}
         onReload={() => load().catch((cause) => toast.error(cause.message))}
-        onSettings={() => setKeyDialogOpen(true)}
+        onSettings={() => setSettingsDialogOpen(true)}
       >
         {content[section]}
       </ConsoleLayout>
@@ -225,13 +227,24 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
 
       <SshKeyDialog
         open={keyDialogOpen}
-        configured={sharedKeyConfigured}
+        configured={settings?.sharedSshPrivateKeyConfigured ?? false}
         busy={busy}
         onOpenChange={setKeyDialogOpen}
         onSave={async (privateKey) => {
           const saved = await save("/api/settings/ssh-private-key", { privateKey }, "SSH 私钥已保存");
-          if (saved) setSharedKeyConfigured(true);
           return saved;
+        }}
+      />
+
+      <SettingsDialog
+        open={settingsDialogOpen}
+        busy={busy}
+        settings={settings}
+        onOpenChange={setSettingsDialogOpen}
+        onSave={(value) => save("/api/settings", value, "系统设置已保存")}
+        onConfigureSshKey={() => {
+          setSettingsDialogOpen(false);
+          setKeyDialogOpen(true);
         }}
       />
 

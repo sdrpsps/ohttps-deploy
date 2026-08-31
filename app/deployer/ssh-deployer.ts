@@ -26,7 +26,7 @@ export class SSHDeployer implements Deployer {
     const cert = await readFile(material.certificatePath); const key = await readFile(material.privateKeyPath);
     const { Client: SshClient } = await import("ssh2");
     const client = this.options.clientFactory?.() ?? new SshClient();
-    const tempRoot = `/tmp/ssl-deploy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const tempRoot = `/tmp/ohttps-deploy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     try {
       await new Promise<void>((resolve, reject) => { client.once("ready", () => resolve()).once("error", reject).connect(this.connectConfig(target)); });
       await this.exec(client, `mkdir -p ${tempRoot}`);

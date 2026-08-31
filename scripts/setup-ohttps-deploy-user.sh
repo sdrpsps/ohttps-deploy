@@ -4,9 +4,9 @@
 # 用途：在目标服务器上创建最小权限的 SSL 证书部署专用用户，并执行环境与权限自测
 #
 # 使用方法：
-#   sudo bash setup-ssl-deploy-user.sh "ssh-ed25519 AAAAC3..."
+#   sudo bash setup-ohttps-deploy-user.sh "ssh-ed25519 AAAAC3..."
 #   或者带参数：
-#   sudo bash setup-ssl-deploy-user.sh --user cert --cert-dir /etc/nginx/ssl --key "ssh-ed25519 ..."
+#   sudo bash setup-ohttps-deploy-user.sh --user cert --cert-dir /etc/nginx/ssl --key "ssh-ed25519 ..."
 # ==============================================================================
 
 set -euo pipefail
@@ -157,7 +157,7 @@ DOCKER_BIN="$(command -v docker 2>/dev/null || echo '/usr/bin/docker')"
 
 cat <<EOF > "$TMP_SUDOERS"
 # ==============================================================================
-# 由 ssl-deploy 用户配置脚本自动生成
+# 由 ohttps-deploy 用户配置脚本自动生成
 # 仅允许 $DEPLOY_USER 免密执行证书配置测试与服务热重载命令
 # ==============================================================================
 EOF
@@ -210,7 +210,7 @@ if [[ "$SKIP_TEST" = false ]]; then
 
     # 测试 2: 验证部署用户在证书目录的读写权限
     echo -n "• [测试 2/3] 测试部署用户对证书目录 ($CERT_DIR) 的写入权限... "
-    TEST_FILE="$CERT_DIR/.ssl_deploy_test_$$"
+    TEST_FILE="$CERT_DIR/.ohttps_deploy_test_$$"
     if sudo -u "$DEPLOY_USER" touch "$TEST_FILE" 2>/dev/null && \
        sudo -u "$DEPLOY_USER" test -f "$TEST_FILE" && \
        sudo -u "$DEPLOY_USER" rm -f "$TEST_FILE"; then
@@ -258,7 +258,7 @@ echo ""
 echo -e "${BLUE}${BOLD}==========================================================${RESET}"
 echo -e "${GREEN}${BOLD}✨ 部署用户 [${DEPLOY_USER}] 初始化完成！${RESET}"
 echo -e "${BLUE}${BOLD}==========================================================${RESET}"
-echo "在 ssl-deploy 网页控制台中添加该服务器时，建议填入："
+echo "在 ohttps-deploy 网页控制台中添加该服务器时，建议填入："
 echo -e "  • 用户名 (Username):        ${BOLD}${DEPLOY_USER}${RESET}"
 echo -e "  • 证书路径 (Cert Path):     ${BOLD}${CERT_DIR}/fullchain.pem${RESET}"
 echo -e "  • 私钥路径 (Key Path):      ${BOLD}${CERT_DIR}/privkey.pem${RESET}"

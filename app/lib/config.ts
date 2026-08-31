@@ -1,18 +1,8 @@
 import { z } from "zod";
 
-const optionalSecret = z.string().trim().min(1).optional().or(z.literal(""));
-
 export const envSchema = z.object({
-  DATABASE_URL: z.string().trim().min(1).default("./data/ssl-deploy.db"),
-  OHTTPS_API_ID: optionalSecret,
-  OHTTPS_API_KEY: optionalSecret,
-  WEBHOOK_URL: z.string().url().optional().or(z.literal("")),
-  WEBHOOK_SECRET: optionalSecret,
-  RENEW_BEFORE_DAYS: z.coerce.number().int().min(1).max(365).default(20),
-  OHTTPS_MIN_INTERVAL_SECONDS: z.coerce.number().int().min(60).default(86400),
-  OHTTPS_DAILY_CALL_LIMIT: z.coerce.number().int().min(1).default(100),
-  SCHEDULER_INTERVAL_MINUTES: z.coerce.number().int().min(1).default(60),
-  LOG_RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
+  DATABASE_URL: z.string().trim().min(1).default("./data/ohttps-deploy.db"),
+  CERTIFICATE_STORAGE_DIR: z.string().trim().min(1).default("./data/certs"),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
@@ -30,9 +20,6 @@ export function loadConfig(source: Record<string, string | undefined> = process.
 export function redactedConfig(config: AppConfig) {
   return {
     databaseUrl: config.DATABASE_URL,
-    hasOhttpsCredentials: Boolean(config.OHTTPS_API_ID && config.OHTTPS_API_KEY),
-    webhookConfigured: Boolean(config.WEBHOOK_URL && config.WEBHOOK_SECRET),
-    renewBeforeDays: config.RENEW_BEFORE_DAYS,
-    schedulerIntervalMinutes: config.SCHEDULER_INTERVAL_MINUTES,
+    certificateStorageDir: config.CERTIFICATE_STORAGE_DIR,
   };
 }
