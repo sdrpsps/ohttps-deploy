@@ -23,14 +23,20 @@ type OverviewPanelProps = {
   servers: ManagedServer[];
   expiringCount: number;
   onCreateCertificate: () => void;
-  onNavigate: (section: "certificates" | "servers" | "activity") => void;
+  onNavigate: (section: "certificates" | "servers" | "policies" | "activity") => void;
+  onSettings: () => void;
+  ohttpsConfigured: boolean;
+  policyCount: number;
+  workerOnline: boolean;
+  failedDeployments: number;
+  failedSyncJobs: number;
 };
 
 const metricStyles = {
-  certificates: "bg-cyan-50 text-cyan-600",
-  expiring: "bg-amber-50 text-amber-600",
-  servers: "bg-violet-50 text-violet-600",
-  worker: "bg-emerald-50 text-emerald-600",
+  certificates: "bg-[var(--accent)] text-[var(--chart-4)]",
+  expiring: "bg-[var(--primary-foreground)] text-primary",
+  servers: "bg-[var(--muted)] text-foreground",
+  worker: "bg-[var(--accent)] text-[var(--chart-4)]",
 };
 
 export function OverviewPanel({
@@ -39,6 +45,12 @@ export function OverviewPanel({
   expiringCount,
   onCreateCertificate,
   onNavigate,
+  onSettings,
+  ohttpsConfigured,
+  policyCount,
+  workerOnline,
+  failedDeployments,
+  failedSyncJobs,
 }: OverviewPanelProps) {
   const enabledServers = servers.filter((server) => server.enabled).length;
   const metrics = [
@@ -66,28 +78,28 @@ export function OverviewPanel({
     {
       label: "系统状态",
       value: "正常",
-      detail: "Worker 运行中",
+      detail: workerOnline ? "Worker 运行中" : "Worker 离线",
       icon: CheckCircle2,
-      style: metricStyles.worker,
+      style: workerOnline ? metricStyles.worker : metricStyles.expiring,
     },
   ];
 
   return (
     <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-2xl bg-primary px-6 py-8 text-primary-foreground sm:px-8">
-        <div className="relative z-10 max-w-xl">
+      <section className="relative isolate z-0 overflow-hidden rounded-2xl bg-primary px-6 py-7 text-primary-foreground sm:px-8 sm:py-8">
+        <div className="relative z-0 max-w-xl">
           <Badge className="mb-4 bg-white/15 text-white hover:bg-white/15">
             <Sparkles className="mr-1 size-3" />
             安全部署中心
           </Badge>
-          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            让每一次证书更新，<span className="text-cyan-200">都井然有序。</span>
+          <h2 className="text-xl font-semibold leading-tight tracking-tight sm:text-2xl">
+            让每一次证书更新，<span className="text-[var(--chart-1)]">都井然有序。</span>
           </h2>
-          <p className="mt-3 text-sm leading-relaxed text-slate-200">
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-primary-foreground/85">
             集中管理证书、服务器与自动部署策略。Worker 正在后台持续守护你的 HTTPS 资产。
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Button className="bg-white text-primary hover:bg-slate-100" onClick={onCreateCertificate}>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <Button className="bg-primary-foreground text-primary hover:bg-primary-foreground" onClick={onCreateCertificate}>
               添加证书
             </Button>
             <Button
@@ -99,8 +111,21 @@ export function OverviewPanel({
             </Button>
           </div>
         </div>
-        <div className="absolute -right-12 -top-14 size-64 rounded-full border-[24px] border-white/10" />
+        <div className="pointer-events-none absolute -right-12 -top-14 z-0 size-64 rounded-full border-[24px] border-white/10" />
       </section>
+
+      <NextActions
+        items={[
+          !ohttpsConfigured && { title: "尚未配置 ohttps 凭据", description: "配置 API ID 和 API Key 后才能同步证书。", action: "去配置凭据", onClick: onSettings },
+          certificates.length === 0 && { title: "尚未添加证书", description: "先添加一张 ohttps 证书，开始管理续期。", action: "添加证书", onClick: onCreateCertificate },
+          servers.length === 0 && { title: "尚未添加服务器", description: "添加 SSH 部署目标，证书才能自动分发。", action: "添加服务器", onClick: () => onNavigate("servers") },
+          policyCount === 0 && certificates.length > 0 && servers.length > 0 && { title: "尚未创建部署策略", description: "把证书映射到服务器，启用自动部署。", action: "配置策略", onClick: () => onNavigate("policies") },
+          !workerOnline && { title: "Worker 未运行", description: "任务会暂时排队，启动 Worker 后自动执行。", action: "查看任务", onClick: () => onNavigate("activity") },
+          failedDeployments > 0 && { title: `有 ${failedDeployments} 个失败部署任务`, description: "查看错误原因并重试失败任务。", action: "查看任务", onClick: () => onNavigate("activity") },
+          failedSyncJobs > 0 && { title: `有 ${failedSyncJobs} 个失败同步任务`, description: "查看失败原因并重新同步。", action: "查看任务", onClick: () => onNavigate("activity") },
+          expiringCount > 0 && { title: `有 ${expiringCount} 张证书即将过期`, description: "尽快同步并确认部署结果。", action: "查看证书", onClick: () => onNavigate("certificates") },
+        ].filter(Boolean) as NextAction[]}
+      />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map(({ label, value, detail, icon: Icon, style }) => (
@@ -147,4 +172,11 @@ export function OverviewPanel({
       </section>
     </div>
   );
+}
+
+type NextAction = { title: string; description: string; action: string; onClick: () => void };
+
+function NextActions({ items }: { items: NextAction[] }) {
+  if (!items.length) return null;
+  return <Card><CardHeader><CardTitle className="text-lg">下一步操作</CardTitle><CardDescription>根据当前配置，建议优先处理以下事项。</CardDescription></CardHeader><CardContent className="grid gap-3 md:grid-cols-2">{items.map((item) => <div key={item.title} className="flex items-center justify-between gap-4 rounded-lg border p-3"><div><p className="text-sm font-medium">{item.title}</p><p className="mt-1 text-xs text-muted-foreground">{item.description}</p></div><Button variant="outline" size="sm" onClick={item.onClick}>{item.action}</Button></div>)}</CardContent></Card>;
 }

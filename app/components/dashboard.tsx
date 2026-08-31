@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, LayoutDashboard, Server, Settings2, ShieldCheck } from "lucide-react";
+import { Activity, Bell, LayoutDashboard, Server, Settings2, ShieldCheck, KeyRound, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ActivityPanel } from "@/components/activity-panel";
+import { NotificationPanel } from "@/components/notification-panel";
 import { PoliciesPanel } from "@/components/policies-panel";
 import { CertificateFormDialog } from "@/components/console/certificate-form-dialog";
 import { CertificatePanel } from "@/components/console/certificate-panel";
@@ -15,6 +16,7 @@ import { ServerFormDialog } from "@/components/console/server-form-dialog";
 import { ServerPanel } from "@/components/console/server-panel";
 import { SettingsDialog, type SettingsSummary } from "@/components/console/settings-dialog";
 import { SshKeyDialog } from "@/components/console/ssh-key-dialog";
+import { OnboardingWizard } from "@/components/console/onboarding-wizard";
 import { daysUntil } from "@/lib/utils";
 import type {
   Certificate,
@@ -32,6 +34,7 @@ const navigation: NavigationItem[] = [
   { value: "servers", label: "服务器", description: "管理部署目标与 SSH 连接配置", href: "/servers", icon: Server },
   { value: "policies", label: "部署策略", description: "配置证书到服务器的自动部署映射", href: "/deployment-policies", icon: Settings2 },
   { value: "activity", label: "任务日志", description: "查看部署任务、实时日志与审计记录", href: "/deployments", icon: Activity },
+  { value: "notifications", label: "通知", description: "查看 Webhook 投递状态并手动重试", href: "/notifications", icon: Bell },
 ];
 
 export default function Dashboard({ section = "overview" }: { section?: DashboardSection }) {
@@ -39,6 +42,10 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [servers, setServers] = useState<ManagedServer[]>([]);
   const [settings, setSettings] = useState<SettingsSummary | null>(null);
+  const [policyCount, setPolicyCount] = useState(0);
+  const [workerOnline, setWorkerOnline] = useState(false);
+  const [failedDeployments, setFailedDeployments] = useState(0);
+  const [failedSyncJobs, setFailedSyncJobs] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [certificateDialogOpen, setCertificateDialogOpen] = useState(false);
@@ -52,17 +59,25 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   async function load() {
     setLoading(true);
     try {
-      const [certificateResponse, serverResponse, settingsResponse] = await Promise.all([
+      const [certificateResponse, serverResponse, settingsResponse, policyResponse, healthResponse, deploymentResponse, syncResponse] = await Promise.all([
         fetch("/api/certificates", { cache: "no-store" }),
         fetch("/api/servers", { cache: "no-store" }),
         fetch("/api/settings", { cache: "no-store" }),
+        fetch("/api/deployment-policies", { cache: "no-store" }),
+        fetch("/api/health", { cache: "no-store" }),
+        fetch("/api/deployments", { cache: "no-store" }),
+        fetch("/api/certificate-sync-jobs", { cache: "no-store" }),
       ]);
-      if (!certificateResponse.ok || !serverResponse.ok || !settingsResponse.ok) {
+      if (!certificateResponse.ok || !serverResponse.ok || !settingsResponse.ok || !policyResponse.ok || !healthResponse.ok || !deploymentResponse.ok || !syncResponse.ok) {
         throw new Error("无法加载控制台数据");
       }
       setCertificates((await certificateResponse.json()).data);
       setServers((await serverResponse.json()).data);
       setSettings((await settingsResponse.json()).data);
+      setPolicyCount(((await policyResponse.json()).data ?? []).length);
+      setWorkerOnline(Boolean((await healthResponse.json()).worker));
+      setFailedDeployments(((await deploymentResponse.json()).data ?? []).filter((item: { status: string }) => item.status === "failed").length);
+      setFailedSyncJobs(((await syncResponse.json()).data ?? []).filter((item: { status: string }) => item.status === "failed").length);
     } finally {
       setLoading(false);
     }
@@ -115,6 +130,18 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     }
   }
 
+  async function refreshCertificate(id: string) {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/certificates/${id}/refresh`, { method: "POST" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) { toast.error(body?.error?.message ?? "同步未创建"); return; }
+      toast.success("同步任务已创建");
+      router.push(`/deployments?taskId=${body?.data?.taskId ?? ""}`);
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "同步未创建"); }
+    finally { setBusy(false); }
+  }
+
   async function deleteSelected() {
     if (!deleteTarget) return;
     const deleted = await runAction(
@@ -151,8 +178,14 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         certificates={certificates}
         servers={servers}
         expiringCount={expiringCount}
+        workerOnline={workerOnline}
+        failedDeployments={failedDeployments}
+        failedSyncJobs={failedSyncJobs}
+        ohttpsConfigured={settings?.ohttpsConfigured ?? false}
+        policyCount={policyCount}
         onCreateCertificate={() => openCertificateDialog()}
         onNavigate={navigate}
+        onSettings={() => setSettingsDialogOpen(true)}
       />
     ),
     certificates: (
@@ -162,8 +195,12 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         busy={busy}
         onCreate={() => openCertificateDialog()}
         onEdit={openCertificateDialog}
-        onRefresh={(id) => void runAction(`/api/certificates/${id}/refresh`, "POST", "刷新任务已创建")}
+        onRefresh={(id) => void refreshCertificate(id)}
         onDelete={setDeleteTarget}
+        ohttpsConfigured={settings?.ohttpsConfigured ?? false}
+        deploymentTargetCount={policyCount}
+        onNavigate={(target) => navigate(target)}
+        onConfigureSettings={() => setSettingsDialogOpen(true)}
       />
     ),
     servers: (
@@ -179,6 +216,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     ),
     policies: <PoliciesPanel certificates={certificates} servers={servers} />,
     activity: <ActivityPanel certificates={certificates} servers={servers} />,
+    notifications: <NotificationPanel />,
   } satisfies Record<DashboardSection, React.ReactNode>;
 
   return (
@@ -187,10 +225,22 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         section={section}
         navigation={navigation}
         loading={loading}
+        workerOnline={workerOnline}
         onReload={() => load().catch((cause) => toast.error(cause.message))}
         onSettings={() => setSettingsDialogOpen(true)}
       >
-        {content[section]}
+        <div className="space-y-8">
+          {section === "overview" && settings && (
+            <OnboardingWizard steps={[
+              { label: "配置 ohttps 凭据", done: settings.ohttpsConfigured, action: "去配置", onAction: () => setSettingsDialogOpen(true), icon: KeyRound },
+              { label: "添加第一张证书", done: certificates.length > 0, action: "添加证书", onAction: () => openCertificateDialog(), icon: ShieldCheck },
+              { label: "添加部署服务器", done: servers.length > 0, action: "添加服务器", onAction: () => openServerDialog(), icon: Server },
+              { label: "创建部署策略", done: policyCount > 0, action: "配置策略", onAction: () => navigate("policies"), icon: Workflow },
+              { label: "检查 Worker 状态", done: workerOnline, icon: Activity },
+            ]} />
+          )}
+          {content[section]}
+        </div>
       </ConsoleLayout>
 
       <CertificateFormDialog

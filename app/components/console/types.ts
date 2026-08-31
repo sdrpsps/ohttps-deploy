@@ -20,7 +20,7 @@ export type ManagedServer = {
   hostFingerprint: string | null;
 };
 
-export type DashboardSection = "overview" | "certificates" | "servers" | "policies" | "activity";
+export type DashboardSection = "overview" | "certificates" | "servers" | "policies" | "activity" | "notifications";
 
 export type NavigationItem = {
   value: DashboardSection;

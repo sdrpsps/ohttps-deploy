@@ -3,6 +3,7 @@ import { z } from "zod";
 export const envSchema = z.object({
   DATABASE_URL: z.string().trim().min(1).default("./data/ohttps-deploy.db"),
   CERTIFICATE_STORAGE_DIR: z.string().trim().min(1).default("./data/certs"),
+  AUTH_SECRET: z.string().trim().min(32).default("development-only-change-me-32chars"),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
@@ -13,6 +14,7 @@ export function loadConfig(source: Record<string, string | undefined> = process.
     const details = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
     throw new Error(`Invalid configuration: ${details}`);
   }
+  if (source.NODE_ENV === "production" && source.NEXT_PHASE !== "phase-production-build" && parsed.data.AUTH_SECRET === "development-only-change-me-32chars") throw new Error("Invalid configuration: AUTH_SECRET must be set in production");
   return parsed.data;
 }
 
@@ -21,5 +23,6 @@ export function redactedConfig(config: AppConfig) {
   return {
     databaseUrl: config.DATABASE_URL,
     certificateStorageDir: config.CERTIFICATE_STORAGE_DIR,
+    authSecretConfigured: config.AUTH_SECRET !== "development-only-change-me-32chars",
   };
 }

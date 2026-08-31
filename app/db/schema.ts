@@ -66,6 +66,7 @@ export const deployments = sqliteTable("deployments", {
   status: text("status", { enum: ["queued", "running", "succeeded", "failed", "cancelled", "partial"] }).notNull().default("queued"),
   failurePolicy: text("failure_policy", { enum: ["all_success", "allow_partial"] }).notNull().default("all_success"),
   concurrency: integer("concurrency").notNull().default(4),
+  dryRun: integer("dry_run", { mode: "boolean" }).notNull().default(false),
   startedAt: integer("started_at", { mode: "timestamp_ms" }),
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
   errorSummary: text("error_summary"),
@@ -150,6 +151,58 @@ export const admins = sqliteTable("admins", {
   lastLoginAt: integer("last_login_at", { mode: "timestamp_ms" }),
   ...timestamps,
 });
+
+// Better Auth core tables. Keep these names aligned with app/lib/better-auth.ts.
+export const authUsers = sqliteTable("user", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: integer("email_verified", { mode: "boolean" }).notNull().default(false),
+  image: text("image"),
+  username: text("username").unique(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
+});
+
+export const authSessions = sqliteTable("session", {
+  id: text("id").primaryKey(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  token: text("token").notNull().unique(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  userId: text("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+}, (table) => ({ userIdx: index("session_user_id_idx").on(table.userId) }));
+
+export const authAccounts = sqliteTable("account", {
+  id: text("id").primaryKey(),
+  issuer: text("issuer").notNull(),
+  accountId: text("account_id").notNull(),
+  providerId: text("provider_id").notNull(),
+  userId: text("user_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  idToken: text("id_token"),
+  accessTokenExpiresAt: integer("access_token_expires_at", { mode: "timestamp_ms" }),
+  refreshTokenExpiresAt: integer("refresh_token_expires_at", { mode: "timestamp_ms" }),
+  scope: text("scope"),
+  password: text("password"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
+}, (table) => ({
+  issuerAccountIdx: uniqueIndex("account_issuer_account_idx").on(table.issuer, table.accountId),
+  userIdx: index("account_user_id_idx").on(table.userId),
+}));
+
+export const authVerifications = sqliteTable("verification", {
+  id: text("id").primaryKey(),
+  identifier: text("identifier").notNull(),
+  value: text("value").notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
+}, (table) => ({ identifierIdx: index("verification_identifier_idx").on(table.identifier) }));
 
 export const certificatesRelations = relations(certificates, ({ many }) => ({ versions: many(certificateVersions), deployments: many(deployments) }));
 export const certificateVersionsRelations = relations(certificateVersions, ({ one, many }) => ({ certificate: one(certificates, { fields: [certificateVersions.certificateId], references: [certificates.id] }), deployments: many(deployments) }));

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { posix } from "node:path";
-import type { Client, ConnectConfig } from "ssh2";
+import type { Client, ClientChannel, ConnectConfig } from "ssh2";
 import { Deployer, DeploymentMaterial, DeployTarget, DeploymentResult, validateCommand } from "./deployer";
 
 type SshFactory = () => Client;
@@ -29,7 +29,7 @@ export class SSHDeployer implements Deployer {
     const tempRoot = `/tmp/ohttps-deploy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     try {
       await new Promise<void>((resolve, reject) => { client.once("ready", () => resolve()).once("error", reject).connect(this.connectConfig(target)); });
-      await this.exec(client, `mkdir -p ${tempRoot}`);
+      await this.exec(client, `mkdir -p ${shellQuote(tempRoot)}`, options.signal);
       await new Promise<void>((resolve, reject) => client.sftp((error, sftp) => {
         if (error || !sftp) return reject(error ?? new Error("sftp unavailable"));
         sftp.fastPut(material.certificatePath, posix.join(tempRoot, "fullchain.pem"), (putError) => {
@@ -37,23 +37,28 @@ export class SSHDeployer implements Deployer {
           sftp.fastPut(material.privateKeyPath, posix.join(tempRoot, "privkey.pem"), (keyError) => keyError ? reject(keyError) : resolve());
         });
       }));
-      await this.exec(client, `chmod 0644 ${tempRoot}/fullchain.pem && chmod 0600 ${tempRoot}/privkey.pem && test -s ${tempRoot}/fullchain.pem && test -s ${tempRoot}/privkey.pem`);
-      await this.exec(client, `mv ${tempRoot}/fullchain.pem ${target.certPath} && mv ${tempRoot}/privkey.pem ${target.privateKeyPath}`);
-      await this.exec(client, target.reloadCommand);
-      if (target.healthCheckCommand) await this.exec(client, target.healthCheckCommand);
+      await this.exec(client, `chmod 0644 ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && chmod 0600 ${shellQuote(posix.join(tempRoot, "privkey.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "privkey.pem"))}`, options.signal);
+      await this.exec(client, `mv ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} ${shellQuote(target.certPath)} && mv ${shellQuote(posix.join(tempRoot, "privkey.pem"))} ${shellQuote(target.privateKeyPath)}`, options.signal);
+      await this.exec(client, target.reloadCommand, options.signal);
+      if (target.healthCheckCommand) await this.exec(client, target.healthCheckCommand, options.signal);
       return { targetId: target.id, ok: true, exitCode: 0 };
     } catch (error) { return { targetId: target.id, ok: false, error: sanitizeError((error as Error).message) }; }
-    finally { try { await this.exec(client, `rm -rf ${tempRoot}`); } catch { /* best effort cleanup */ } client.end(); }
+    finally { try { await this.exec(client, `rm -rf -- ${shellQuote(tempRoot)}`); } catch { /* best effort cleanup */ } client.end(); }
   }
 
-  private exec(client: Client, command: string): Promise<string> {
+  private exec(client: Client, command: string, signal?: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) { reject(new Error("cancelled")); return; }
+      let activeStream: ClientChannel | undefined;
+      const abort = () => { activeStream?.destroy(); reject(new Error("cancelled")); };
+      signal?.addEventListener("abort", abort, { once: true });
       client.exec(command, (error, stream) => {
-        if (error) { reject(error); return; }
+        if (error) { signal?.removeEventListener("abort", abort); reject(error); return; }
+        activeStream = stream;
         let output = "";
         stream.on("data", (chunk: Buffer) => { output += chunk.toString(); });
         stream.stderr.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-        stream.on("close", (code: number) => code === 0 ? resolve(output) : reject(new Error(`remote command exited with code ${code}`)));
+        stream.on("close", (code: number) => { signal?.removeEventListener("abort", abort); code === 0 ? resolve(output) : reject(new Error(`remote command exited with code ${code}`)); });
       });
     });
   }
@@ -85,3 +90,5 @@ export function normalizeFingerprint(fp?: string | null): string {
 }
 
 function sanitizeError(message: string) { return message.replace(/(pass(word)?|private.?key|authorization|token)\s*[:=]\s*[^\s]+/gi, "$1=[REDACTED]").slice(0, 500); }
+
+function shellQuote(value: string) { return `'${value.replace(/'/g, "'\\''")}'`; }

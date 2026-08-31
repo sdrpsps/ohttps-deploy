@@ -128,7 +128,8 @@ function DeploymentRow({
 
 export function StatusBadge({ status }: { status: string }) {
   const variant = status === "succeeded" ? "default" : status === "failed" ? "destructive" : "secondary";
-  return <Badge variant={variant}>{status}</Badge>;
+  const labels: Record<string, string> = { queued: "排队中", running: "执行中", succeeded: "成功", failed: "失败", cancelled: "已取消", partial: "部分成功" };
+  return <Badge variant={variant}>{labels[status] ?? status}</Badge>;
 }
 
 export function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {

@@ -22,6 +22,7 @@ type ConsoleLayoutProps = {
   loading: boolean;
   onReload: () => void;
   onSettings: () => void;
+  workerOnline: boolean;
   children: React.ReactNode;
 };
 
@@ -31,6 +32,7 @@ export function ConsoleLayout({
   loading,
   onReload,
   onSettings,
+  workerOnline,
   children,
 }: ConsoleLayoutProps) {
   const router = useRouter();
@@ -50,7 +52,7 @@ export function ConsoleLayout({
           <TabsTrigger
             key={value}
             value={value}
-            className="w-full justify-start gap-3 rounded-lg px-3 py-2.5 data-[state=active]:bg-slate-100 data-[state=active]:text-primary data-[state=active]:shadow-none"
+            className="w-full justify-start gap-3 rounded-lg px-3 py-2.5 data-[state=active]:bg-sidebar-accent data-[state=active]:text-primary data-[state=active]:shadow-none"
           >
             <Icon className="size-4" />
             {label}
@@ -72,15 +74,15 @@ export function ConsoleLayout({
   }
 
   return (
-    <Tabs value={section} onValueChange={chooseSection} className="min-h-screen bg-slate-50 text-slate-950">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-200 bg-white px-4 py-5 lg:block">
+    <Tabs value={section} onValueChange={chooseSection} className="min-h-screen bg-background text-foreground">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-sidebar-border bg-sidebar px-4 py-5 lg:block">
         <Brand />
         {navigationList()}
-        <WorkerStatus />
+        <WorkerStatus online={workerOnline} />
       </aside>
 
       <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-        <SheetContent side="left" className="w-72 bg-white p-5">
+        <SheetContent side="left" className="w-72 bg-sidebar p-5">
           <SheetHeader className="mb-6 text-left">
             <SheetTitle className="flex items-center gap-3">
               <span className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground">
@@ -95,7 +97,7 @@ export function ConsoleLayout({
       </Sheet>
 
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-8">
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background px-4 backdrop-blur sm:px-8">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileNavOpen(true)} aria-label="打开导航">
               <Menu className="size-5" />
@@ -134,19 +136,19 @@ function Brand() {
   );
 }
 
-function WorkerStatus() {
+function WorkerStatus({ online }: { online: boolean }) {
   return (
-    <Card className="absolute inset-x-4 bottom-5 border-slate-200 bg-slate-50 shadow-none">
+    <Card className="absolute inset-x-4 bottom-5 border-sidebar-border bg-sidebar-accent shadow-none">
       <CardContent className="p-4">
         <div className="flex items-center justify-between text-xs font-medium">
           <span>Worker 队列</span>
-          <span className="flex items-center gap-1.5 text-emerald-600">
-            <span className="size-1.5 rounded-full bg-emerald-500" />
-            已启用
+          <span className={online ? "flex items-center gap-1.5 text-emerald-600" : "flex items-center gap-1.5 text-amber-600"}>
+            <span className={online ? "size-1.5 rounded-full bg-emerald-500" : "size-1.5 rounded-full bg-amber-500"} />
+            {online ? "运行中" : "离线"}
           </span>
         </div>
         <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          Worker 会轮询并执行证书同步与部署任务。
+          {online ? "Worker 会轮询并执行证书同步与部署任务。" : "任务暂不会执行，启动 Worker 后会自动继续。"}
         </p>
       </CardContent>
     </Card>

@@ -6,4 +6,5 @@ assert.equal(config.CERTIFICATE_STORAGE_DIR, "./data/certs");
 const redacted = redactedConfig(config);
 assert.equal("OHTTPS_API_KEY" in redacted, false);
 assert.throws(() => loadConfig({ DATABASE_URL: "", RENEW_BEFORE_DAYS: "0" }), /Invalid configuration/);
+assert.throws(() => loadConfig({ DATABASE_URL: ":memory:", NODE_ENV: "production" }), /AUTH_SECRET/);
 console.log("config tests passed");

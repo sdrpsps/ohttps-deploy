@@ -28,7 +28,7 @@ function positiveInteger(value: string | undefined, fallback: number) {
 /** Loads mutable operational settings. Secrets stay in SQLite and are never returned by the settings API. */
 export async function loadRuntimeSettings(): Promise<RuntimeSettings> {
   const rows = await db.select({ key: settings.key, value: settings.value }).from(settings).where(inArray(settings.key, [...keys]));
-  const values = Object.fromEntries(rows.map((row) => [row.key, row.value])) as Partial<Record<Key, string>>;
+  const values = Object.fromEntries(rows.map((row: { key: string; value: string }) => [row.key, row.value])) as Partial<Record<Key, string>>;
   return {
     ohttpsApiId: values.ohttps_api_id ?? "",
     ohttpsApiKey: values.ohttps_api_key ?? "",

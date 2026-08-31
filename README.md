@@ -8,14 +8,14 @@ This table is the delivery record. A phase is only marked complete once its list
 
 | Phase | Status | Current scope / remaining acceptance points |
 | --- | --- | --- |
-| 0. Design and security baseline | Partial | Docker, migrations, configuration validation, and log redaction exist. Initial-admin bootstrap and production authentication remain for Phase 5. |
-| 1. Local certificate workflow | Partial | Versioned local storage, X.509/key/SAN validation, and ohttps signing exist. Worker-backed manual sync is now included; task-detail UI for sync jobs remains. |
-| 2. SSH multi-server deployment | Partial | Host fingerprint validation, atomic remote replacement, queue worker, retry/cancel routes, and per-target results exist. Dry-run, target concurrency limits, and process-level cancellation remain. |
-| 3. Web console and activity history | Partial | Certificate/server/policy/deployment screens, activity history, and SSE routes exist. Authentication and complete task filtering remain. |
-| 4. Automation and notifications | In progress | Local certificate scan, cost-aware renewal sync, automatic deployment on a new version, signed Webhook delivery, deduplication, and retry are implemented. Expiry recovery events and a notification management UI remain. |
-| 5. Production hardening | Not started | Authentication, backup/recovery, PostgreSQL compatibility, metrics, rate limits, and disaster recovery. |
+| 0. Design and security baseline | Complete for MVP | Docker, migrations, configuration validation, log redaction, initial-admin bootstrap, signed sessions, protected routes, and same-origin CSRF checks are implemented. |
+| 1. Local certificate workflow | Complete for MVP | Versioned local storage, X.509/key/SAN validation, ohttps signing, Worker sync, sync-job API, and sync-job UI are implemented. |
+| 2. SSH multi-server deployment | Complete for MVP | Host fingerprint validation, atomic remote replacement, queue worker, retry/cancel routes, per-target results, dry-run, target concurrency limits, and active stream cancellation are implemented. |
+| 3. Web console and activity history | Complete for MVP | Certificate/server/policy/deployment screens, activity history, filters, sync history, and SSE history resume are implemented. |
+| 4. Automation and notifications | Complete for MVP | Local scan, cost-aware renewal sync, automatic deployment, signed Webhook delivery, deduplication, retries, recovery events, retention cleanup, and notification management are implemented. |
+| 5. Production hardening | Complete for MVP | Authentication, backup/restore, metrics, rate limiting, retention, Turso/libSQL remote support, and disaster recovery runbook are implemented. |
 
-**Current delivery target:** finish the remaining Phase 4 acceptance points, then close prior partial items before declaring any phase complete.
+**Current delivery target:** run the optional Turso and disaster-recovery drills in the deployment environment.
 
 ## Local start
 
@@ -39,4 +39,4 @@ The container entrypoint applies database migrations automatically. Persistent v
 
 Configure ohttps credentials, Webhook URL/signing secret, renewal limits, scan frequency, log retention, and the shared SSH private key in **设置**. Secrets are stored in SQLite and are never returned by the API; the Worker reads them directly. Webhook configuration is not read from environment variables. Certificate versions default to `./data/certs`, alongside the default database path. Use **立即刷新** to enqueue an ohttps sync; it may incur an ohttps API charge. The Worker validates and stores a new immutable certificate version, then automatically creates deployments for matching enabled policies.
 
-The initial admin account and future secret-management flow are intentionally reserved for the authentication phase. Never place real ohttps keys, SSH private keys, certificates, or webhook secrets in source control.
+On first Worker startup, an `admin` account is created and its generated password is printed once in the Worker log. Set `AUTH_SECRET` to a long random value in production. Never place real ohttps keys, SSH private keys, certificates, or webhook secrets in source control.

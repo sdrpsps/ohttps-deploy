@@ -27,6 +27,10 @@ export function DeploymentDetailPanel({ deployment, onClose }: DeploymentDetailP
         <Button variant="ghost" onClick={onClose}>关闭</Button>
       </CardHeader>
       <CardContent className="grid gap-6 lg:grid-cols-2">
+        <div className="space-y-4 lg:col-span-2 rounded-lg border bg-muted p-4">
+          <div className="flex flex-wrap items-center gap-3"><span className="text-sm font-medium">运行状态</span><StatusBadge status={deployment.status} /><span className="text-xs text-muted-foreground">触发：{deployment.trigger}</span></div>
+          <div className="grid gap-3 text-sm sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">当前阶段</p><p className="mt-1 font-medium">{deployment.status === "queued" ? "等待 Worker" : deployment.status === "running" ? "分发与 reload" : "任务已结束"}</p></div><div><p className="text-xs text-muted-foreground">自动部署</p><p className="mt-1 font-medium">根据部署策略执行</p></div><div><p className="text-xs text-muted-foreground">错误原因</p><p className="mt-1 font-medium text-destructive">{deployment.errorSummary ?? "-"}</p></div></div>
+        </div>
         <div>
           <h3 className="mb-2 text-sm font-medium">目标状态</h3>
           {deployment.targets.map((target) => (

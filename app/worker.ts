@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, isNull, lte, or } from "drizzle-orm";
+import { and, desc, eq, isNull, lte, lt, or } from "drizzle-orm";
 import { loadConfig } from "./lib/config";
 import { createLogger } from "./lib/logger";
 import { loadRuntimeSettings, runtimeDefaults, type RuntimeSettings } from "./lib/runtime-settings";
@@ -10,12 +10,13 @@ import { validateCertificatePair } from "./domain/certificate";
 import { OHTTPSClient, redactSensitive } from "./domain/ohttps-client";
 import { shouldScheduleSync } from "./domain/renewal";
 import { postWebhook, type WebhookEvent } from "./domain/webhook";
-import { certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
+import { auditEvents, certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
 import { SSHDeployer } from "./deployer";
+import { ensureAdmin } from "./lib/auth";
+import { runMigrations } from "./db/migrate";
 
 const config = loadConfig();
 const logger = createLogger("worker");
-logger.info("worker started");
 const certificateStore = new CertificateStore(config.CERTIFICATE_STORAGE_DIR);
 let runtimeSettings: RuntimeSettings = { ...runtimeDefaults, ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "", webhookSecret: "" };
 
@@ -30,13 +31,21 @@ async function pollQueue() {
   polling = true;
   try {
     runtimeSettings = await loadRuntimeSettings();
+    await db.insert(settings).values({ key: "worker_heartbeat", value: new Date().toISOString() }).onConflictDoUpdate({ target: settings.key, set: { value: new Date().toISOString(), updatedAt: new Date() } });
     await scanCertificates();
     await processSyncQueue();
     const queued = await db.select().from(deployments).where(eq(deployments.status, "queued")).limit(10);
     for (const deployment of queued) await processDeployment(deployment.id);
     await deliverPendingNotifications();
+    await purgeExpiredRecords();
   } catch (error) { logger.error("queue poll failed", { error: String(error) }); }
   finally { polling = false; }
+}
+
+async function purgeExpiredRecords() {
+  const cutoff = new Date(Date.now() - runtimeSettings.logRetentionDays * 24 * 60 * 60 * 1000);
+  await db.delete(logs).where(lt(logs.createdAt, cutoff));
+  await db.delete(auditEvents).where(lt(auditEvents.createdAt, cutoff));
 }
 
 async function scanCertificates() {
@@ -52,12 +61,19 @@ async function scanCertificates() {
     const remaining = current.notAfter.getTime() - now.getTime();
     if (remaining <= 0) await queueNotification("certificate.expired", "certificate", certificate.id, "failure");
     else if (remaining <= certificate.renewBeforeDays * 24 * 60 * 60 * 1000) await queueNotification("certificate.expiring", "certificate", certificate.id, "warning");
+    else if (await hasRecentCertificateAlert(certificate.id)) await queueNotification("certificate.recovered", "certificate", certificate.id, "success");
     const syncedForCurrentVersion = await hasSyncedCurrentVersion(certificate.id, current.fingerprint);
     if (!shouldScheduleSync({ expiresAt: current.notAfter, lastCheckedAt: certificate.lastSyncAt ?? certificate.lastCheckedAt, now, renewBeforeDays: certificate.renewBeforeDays, minimumIntervalSeconds: runtimeSettings.ohttpsMinIntervalSeconds, syncedForCurrentVersion })) continue;
     const [existing] = await db.select({ id: certificateSyncJobs.id }).from(certificateSyncJobs)
       .where(and(eq(certificateSyncJobs.certificateId, certificate.id), or(eq(certificateSyncJobs.status, "queued"), eq(certificateSyncJobs.status, "running")))).limit(1);
     if (!existing) await db.insert(certificateSyncJobs).values({ id: randomUUID(), certificateId: certificate.id, trigger: "scheduled" });
   }
+}
+
+async function hasRecentCertificateAlert(certificateId: string) {
+  const [alert] = await db.select({ id: notifications.id }).from(notifications)
+    .where(and(eq(notifications.objectType, "certificate"), eq(notifications.objectId, certificateId), or(eq(notifications.eventType, "certificate.expired"), eq(notifications.eventType, "certificate.expiring"), eq(notifications.eventType, "certificate.sync_failed")))).limit(1);
+  return Boolean(alert);
 }
 
 async function processSyncQueue() {
@@ -110,7 +126,7 @@ async function createAutoDeployment(certificateId: string, certificateVersionId:
   if (!targets.length) return;
   const deploymentId = randomUUID();
   await db.insert(deployments).values({ id: deploymentId, certificateId, certificateVersionId, trigger: "scheduled" });
-  await db.insert(deploymentTargets).values(targets.map(({ serverId }) => ({ id: randomUUID(), deploymentId, serverId })));
+  await db.insert(deploymentTargets).values(targets.map(({ serverId }: { serverId: string }) => ({ id: randomUUID(), deploymentId, serverId })));
 }
 
 async function consumeOhttpsCall() {
@@ -142,14 +158,34 @@ async function processDeployment(deploymentId: string) {
   const [version] = await db.select({ certPath: certificateVersions.certPath, privateKeyPath: certificateVersions.privateKeyPath }).from(certificateVersions).where(eq(certificateVersions.id, deployment.certificateVersionId)).limit(1);
   if (!version) { await failDeployment(deploymentId, "certificate version not found"); return; }
   const [sharedKey] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "shared_ssh_private_key")).limit(1);
-  if (!sharedKey) { await failDeployment(deploymentId, "shared SSH private key is not configured"); return; }
-  const results = await Promise.all(targets.map(async (target, index) => {
-    await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-    const result = await new SSHDeployer({ privateKey: sharedKey.value }).deploy(target, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath });
-    await db.update(deploymentTargets).set({ status: result.ok ? "succeeded" : "failed", exitCode: result.exitCode ?? null, errorSummary: result.error ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-    await db.insert(logs).values({ id: randomUUID(), deploymentId, targetId: target.id, sequence: index + 1, level: result.ok ? "info" : "error", message: result.ok ? `${target.name} deployed successfully` : `${target.name} deployment failed: ${result.error ?? "unknown error"}` });
-    return result;
-  }));
+  if (!sharedKey && !deployment.dryRun) { await failDeployment(deploymentId, "shared SSH private key is not configured"); return; }
+  const results: Array<{ ok: boolean; error?: string; exitCode?: number }> = [];
+  const concurrency = Math.max(1, Math.min(deployment.concurrency, targets.length || 1));
+  for (let offset = 0; offset < targets.length; offset += concurrency) {
+    const batch = targets.slice(offset, offset + concurrency);
+    const batchResults = await Promise.all(batch.map(async (target: any, batchIndex: number) => {
+      const controller = new AbortController();
+      const cancelWatch = setInterval(async () => {
+        const [state] = await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1);
+        if (state?.status === "cancelled") controller.abort();
+      }, 1_000);
+      const [state] = await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1);
+      if (state?.status === "cancelled") {
+        clearInterval(cancelWatch);
+        await db.update(deploymentTargets).set({ status: "cancelled", finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
+        return { ok: false, error: "cancelled" };
+      }
+      await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
+      const result = await new SSHDeployer({ privateKey: sharedKey?.value ?? "" }).deploy(target, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath }, { dryRun: deployment.dryRun, signal: controller.signal });
+      clearInterval(cancelWatch);
+      await db.update(deploymentTargets).set({ status: result.ok ? "succeeded" : result.error === "cancelled" ? "cancelled" : "failed", exitCode: result.exitCode ?? null, errorSummary: result.error ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
+      await db.insert(logs).values({ id: randomUUID(), deploymentId, targetId: target.id, sequence: offset + batchIndex + 1, level: result.ok ? "info" : "error", message: result.ok ? `${target.name} ${deployment.dryRun ? "dry-run succeeded" : "deployed successfully"}` : `${target.name} deployment failed: ${result.error ?? "unknown error"}` });
+      return result;
+    }));
+    results.push(...batchResults);
+  }
+  const [latestState] = await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1);
+  if (latestState?.status === "cancelled") return;
   const failed = results.filter((result) => !result.ok).length;
   const status = failed === 0 ? "succeeded" : failed === results.length || deployment.failurePolicy === "all_success" ? "failed" : "partial";
   await db.update(deployments).set({ status, finishedAt: new Date(), errorSummary: failed ? `${failed} target(s) failed` : null, updatedAt: new Date() }).where(eq(deployments.id, deploymentId));
@@ -196,6 +232,14 @@ async function deliverPendingNotifications() {
 }
 
 async function run() {
+  await runMigrations();
+  try {
+    const password = await ensureAdmin();
+    logger.info("worker started");
+    if (password) logger.info("initial admin password generated", { username: "admin", password });
+  } catch (error) {
+    logger.error("admin bootstrap failed", { error: String(error) });
+  }
   while (!stopping) {
     await pollQueue();
     await new Promise((resolve) => setTimeout(resolve, Math.max(15_000, runtimeSettings.schedulerIntervalMinutes * 60_000)));
