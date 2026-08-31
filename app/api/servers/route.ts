@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { servers } from "@/db/schema";
 import { validateCommand } from "@/deployer";
+import { recordAudit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,6 @@ export async function POST(request: Request) {
   const parsed = serverSchema.safeParse(await request.json().catch(() => undefined));
   if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "invalid server fields" } }, { status: 400 });
   try { validateCommand(parsed.data.reloadCommand); if (parsed.data.healthCheckCommand) validateCommand(parsed.data.healthCheckCommand); } catch (error) { return NextResponse.json({ error: { code: "INVALID_COMMAND", message: (error as Error).message } }, { status: 400 }); }
-  const id = randomUUID(); await db.insert(servers).values({ id, ...parsed.data, authRef: "shared-key" });
+  const id = randomUUID(); await db.insert(servers).values({ id, ...parsed.data, authRef: "shared-key" }); await recordAudit("server.created", "server", id);
   return NextResponse.json({ data: { id } }, { status: 201 });
 }

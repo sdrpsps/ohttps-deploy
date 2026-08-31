@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
 import { certificates } from "@/db/schema";
+import { recordAudit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 
@@ -34,5 +35,6 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "invalid certificate fields" } }, { status: 400 });
   const id = randomUUID();
   await db.insert(certificates).values({ id, ...parsed.data });
+  await recordAudit("certificate.created", "certificate", id);
   return NextResponse.json({ data: { id } }, { status: 201 });
 }

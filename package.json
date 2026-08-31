@@ -11,12 +11,14 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx app/db/migrate.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/config.test.ts && tsx tests/domain.test.ts && tsx tests/worker.test.ts && tsx tests/ssh-private-key-route.test.ts"
+    "test": "tsx tests/config.test.ts && tsx tests/domain.test.ts && tsx tests/worker.test.ts && tsx tests/ssh-private-key-route.test.ts && tsx tests/activity-routes.test.ts && tsx tests/delete-routes.test.ts && tsx tests/update-routes.test.ts"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.9.1",
     "@libsql/client": "^0.15.9",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-label": "^2.1.15",
+    "@radix-ui/react-select": "^2.3.7",
     "@radix-ui/react-slot": "^1.3.3",
     "@radix-ui/react-tabs": "^1.1.21",
     "class-variance-authority": "^0.7.1",
@@ -25,8 +27,11 @@
     "drizzle-orm": "^0.38.4",
     "lucide-react": "^1.37.0",
     "next": "^15.2.4",
+    "next-themes": "^0.4.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-hook-form": "^7.87.0",
+    "sonner": "^2.0.8",
     "ssh2": "^1.17.0",
     "tailwind-merge": "^3.6.0",
     "zod": "^3.24.2"
@@ -41,6 +46,7 @@
     "drizzle-kit": "^0.30.4",
     "postcss": "^8.5.26",
     "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }

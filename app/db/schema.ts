@@ -51,6 +51,13 @@ export const servers = sqliteTable("servers", {
   ...timestamps,
 });
 
+export const certificateTargets = sqliteTable("certificate_targets", {
+  certificateId: text("certificate_id").notNull().references(() => certificates.id),
+  serverId: text("server_id").notNull().references(() => servers.id),
+  autoDeploy: integer("auto_deploy", { mode: "boolean" }).notNull().default(true),
+  ...timestamps,
+}, (table) => ({ certificateTargetUnique: uniqueIndex("certificate_targets_certificate_server_idx").on(table.certificateId, table.serverId) }));
+
 export const deployments = sqliteTable("deployments", {
   id: text("id").primaryKey(),
   certificateId: text("certificate_id").notNull().references(() => certificates.id),

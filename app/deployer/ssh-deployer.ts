@@ -9,6 +9,16 @@ type SshFactory = () => Client;
 export class SSHDeployer implements Deployer {
   constructor(private readonly options: { privateKey: string | Buffer; knownHosts?: Record<string, string>; clientFactory?: SshFactory } ) {}
 
+  async testConnection(target: DeployTarget): Promise<DeploymentResult> {
+    const { Client: SshClient } = await import("ssh2");
+    const client = this.options.clientFactory?.() ?? new SshClient();
+    try {
+      await new Promise<void>((resolve, reject) => { client.once("ready", () => resolve()).once("error", reject).connect(this.connectConfig(target)); });
+      return { targetId: target.id, ok: true, exitCode: 0 };
+    } catch (error) { return { targetId: target.id, ok: false, error: sanitizeError((error as Error).message) }; }
+    finally { client.end(); }
+  }
+
   async deploy(target: DeployTarget, material: DeploymentMaterial, options: { dryRun?: boolean; signal?: AbortSignal } = {}): Promise<DeploymentResult> {
     try { validateCommand(target.reloadCommand); if (target.healthCheckCommand) validateCommand(target.healthCheckCommand); } catch (error) { return { targetId: target.id, ok: false, error: (error as Error).message }; }
     if (options.dryRun) return { targetId: target.id, ok: true };
@@ -16,10 +26,9 @@ export class SSHDeployer implements Deployer {
     const cert = await readFile(material.certificatePath); const key = await readFile(material.privateKeyPath);
     const { Client: SshClient } = await import("ssh2");
     const client = this.options.clientFactory?.() ?? new SshClient();
-    const connectConfig: ConnectConfig = { host: target.host, port: target.port, username: target.username, privateKey: this.options.privateKey, readyTimeout: target.timeoutSeconds * 1000, hostHash: "sha256", hostVerifier: (hash: string) => Boolean(target.hostFingerprint && hash === target.hostFingerprint) };
     const tempRoot = `/tmp/ssl-deploy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     try {
-      await new Promise<void>((resolve, reject) => { client.once("ready", () => resolve()).once("error", reject).connect(connectConfig); });
+      await new Promise<void>((resolve, reject) => { client.once("ready", () => resolve()).once("error", reject).connect(this.connectConfig(target)); });
       await this.exec(client, `mkdir -p ${tempRoot}`);
       await new Promise<void>((resolve, reject) => client.sftp((error, sftp) => {
         if (error || !sftp) return reject(error ?? new Error("sftp unavailable"));
@@ -48,6 +57,31 @@ export class SSHDeployer implements Deployer {
       });
     });
   }
+
+  private connectConfig(target: DeployTarget): ConnectConfig {
+    return {
+      host: target.host,
+      port: target.port,
+      username: target.username,
+      privateKey: this.options.privateKey,
+      readyTimeout: target.timeoutSeconds * 1000,
+      hostHash: "sha256",
+      hostVerifier: (hash: string) => Boolean(target.hostFingerprint && normalizeFingerprint(hash) === normalizeFingerprint(target.hostFingerprint)),
+    };
+  }
+}
+
+export function normalizeFingerprint(fp?: string | null): string {
+  if (!fp) return "";
+  const clean = fp.trim();
+  if (/^[0-9a-fA-F]{64}$/.test(clean)) return clean.toLowerCase();
+  const withoutPrefix = clean.replace(/^SHA256:/i, "").replace(/^sha256:/i, "").trim();
+  if (/^[0-9a-fA-F]{64}$/.test(withoutPrefix)) return withoutPrefix.toLowerCase();
+  try {
+    const buf = Buffer.from(withoutPrefix, "base64");
+    if (buf.length === 32) return buf.toString("hex").toLowerCase();
+  } catch {}
+  return clean.toLowerCase();
 }
 
 function sanitizeError(message: string) { return message.replace(/(pass(word)?|private.?key|authorization|token)\s*[:=]\s*[^\s]+/gi, "$1=[REDACTED]").slice(0, 500); }

@@ -3,6 +3,7 @@ import { loadConfig, redactedConfig } from "../app/lib/config";
 
 const config = loadConfig({ DATABASE_URL: ":memory:", OHTTPS_API_ID: "id", OHTTPS_API_KEY: "secret", WEBHOOK_URL: "", WEBHOOK_SECRET: "hook" });
 assert.equal(config.RENEW_BEFORE_DAYS, 20);
+assert.equal(loadConfig({ DATABASE_URL: ":memory:", WEBHOOK_URL: "", WEBHOOK_SECRET: "" }).WEBHOOK_SECRET, "");
 const redacted = redactedConfig(config);
 assert.equal(redacted.hasOhttpsCredentials, true);
 assert.equal("OHTTPS_API_KEY" in redacted, false);

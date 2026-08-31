@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const optionalSecret = z.string().trim().min(1).optional();
+const optionalSecret = z.string().trim().min(1).optional().or(z.literal(""));
 
 export const envSchema = z.object({
   DATABASE_URL: z.string().trim().min(1).default("./data/ssl-deploy.db"),
