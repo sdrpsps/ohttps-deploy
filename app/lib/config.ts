@@ -6,7 +6,6 @@ export const envSchema = z.object({
   DATABASE_URL: z.string().trim().min(1).default("./data/ssl-deploy.db"),
   OHTTPS_API_ID: optionalSecret,
   OHTTPS_API_KEY: optionalSecret,
-  SSH_PRIVATE_KEY_PATH: z.string().trim().min(1).default("./secrets/id_ed25519"),
   WEBHOOK_URL: z.string().url().optional().or(z.literal("")),
   WEBHOOK_SECRET: optionalSecret,
   RENEW_BEFORE_DAYS: z.coerce.number().int().min(1).max(365).default(20),
@@ -32,7 +31,6 @@ export function redactedConfig(config: AppConfig) {
   return {
     databaseUrl: config.DATABASE_URL,
     hasOhttpsCredentials: Boolean(config.OHTTPS_API_ID && config.OHTTPS_API_KEY),
-    sshPrivateKeyPath: config.SSH_PRIVATE_KEY_PATH,
     webhookConfigured: Boolean(config.WEBHOOK_URL && config.WEBHOOK_SECRET),
     renewBeforeDays: config.RENEW_BEFORE_DAYS,
     schedulerIntervalMinutes: config.SCHEDULER_INTERVAL_MINUTES,

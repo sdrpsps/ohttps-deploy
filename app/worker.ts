@@ -1,11 +1,10 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { and, eq, inArray } from "drizzle-orm";
 import { loadConfig } from "./lib/config";
 import { createLogger } from "./lib/logger";
 import { db } from "./db";
-import { certificateVersions, deployments, deploymentTargets, logs, servers } from "./db/schema";
+import { certificateVersions, deployments, deploymentTargets, logs, servers, settings } from "./db/schema";
 import { SSHDeployer } from "./deployer";
 
 const config = loadConfig();
@@ -34,11 +33,11 @@ async function processDeployment(deploymentId: string) {
   const targets = await db.select({ id: deploymentTargets.id, serverId: servers.id, name: servers.name, host: servers.host, port: servers.port, username: servers.username, hostFingerprint: servers.hostFingerprint, certPath: servers.certPath, privateKeyPath: servers.privateKeyPath, reloadCommand: servers.reloadCommand, healthCheckCommand: servers.healthCheckCommand, timeoutSeconds: servers.timeoutSeconds }).from(deploymentTargets).innerJoin(servers, eq(deploymentTargets.serverId, servers.id)).where(eq(deploymentTargets.deploymentId, deploymentId));
   const [version] = await db.select({ certPath: certificateVersions.certPath, privateKeyPath: certificateVersions.privateKeyPath }).from(certificateVersions).where(eq(certificateVersions.id, deployment.certificateVersionId)).limit(1);
   if (!version) { await failDeployment(deploymentId, "certificate version not found"); return; }
-  let key: Buffer;
-  try { key = await readFile(config.SSH_PRIVATE_KEY_PATH); } catch { await failDeployment(deploymentId, "shared SSH private key unavailable"); return; }
+  const [sharedKey] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "shared_ssh_private_key")).limit(1);
+  if (!sharedKey) { await failDeployment(deploymentId, "shared SSH private key is not configured"); return; }
   const results = await Promise.all(targets.map(async (target, index) => {
     await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-    const result = await new SSHDeployer({ privateKey: key }).deploy(target, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath });
+    const result = await new SSHDeployer({ privateKey: sharedKey.value }).deploy(target, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath });
     await db.update(deploymentTargets).set({ status: result.ok ? "succeeded" : "failed", exitCode: result.exitCode ?? null, errorSummary: result.error ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
     await db.insert(logs).values({ id: randomUUID(), deploymentId, targetId: target.id, sequence: index + 1, level: result.ok ? "info" : "error", message: result.ok ? `${target.name} deployed successfully` : `${target.name} deployment failed: ${result.error ?? "unknown error"}` });
     return result;

@@ -141,6 +141,15 @@ API 凭据属于机密。旧版配置含有明文凭据，提交任何代码前�
 - 任何部署命令、数据库迁移或凭据格式变更，都要在变更说明中写出回滚方式。
 - 保持小而可审查的提交；不要为了重构而改动与任务无关的文件。
 
+### 10.1 前端组件与 shadcn/ui 强制约定
+
+- 任何前端页面、布局或交互组件改动，必须先阅读并遵守可用的 `ui-styling` skill。
+- 必须优先复用 `app/components/ui/` 中已有的 shadcn/ui 组件；缺少组件时，使用 `pnpm dlx shadcn@latest add <component>` 生成，不得手写或复制低层 UI primitive。
+- Dialog、Sheet/Drawer、Tabs、Alert、Toast、Popover、表单控件、表格等通用交互必须使用 shadcn/ui 组件。页面仅负责领域数据、事件处理与这些组件的组合。
+- 不得手写替代 shadcn/ui 的 Modal、抽屉、导航 Tab、提示框、按钮、输入框或其他通用组件。仅在 shadcn/ui 无法覆盖的业务展示结构中使用语义化 HTML 与 Tailwind 组合。
+- 保持单个业务页面组件约 250 行为宜（不是硬性限制）；超过时应首先通过 shadcn/ui 组合、数据映射或复用已有组件缩减，而不是新增自定义通用组件库。
+- 新增 shadcn 组件后，必须运行类型检查和构建；不得删除 shadcn 生成的无障碍行为、键盘交互或焦点管理。
+
 ## 11. 分阶段交付
 
 ### Phase 0：设计与安全基线
