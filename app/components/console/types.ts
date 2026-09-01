@@ -18,6 +18,11 @@ export type ManagedServer = {
   username: string;
   enabled: boolean;
   hostFingerprint: string | null;
+  certPath: string;
+  privateKeyPath: string;
+  reloadCommand: string;
+  healthCheckCommand: string | null;
+  timeoutSeconds: number;
 };
 
 export type DashboardSection = "overview" | "certificates" | "servers" | "policies" | "activity" | "notifications";

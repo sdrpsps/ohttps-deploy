@@ -23,6 +23,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import type { ManagedServer } from "./types";
 
 const serverSchema = z.object({
@@ -31,6 +32,11 @@ const serverSchema = z.object({
   port: z.coerce.number().int().min(1).max(65535),
   username: z.string().min(1, "请输入用户名"),
   hostFingerprint: z.string().min(1, "请输入主机指纹"),
+  certPath: z.string().min(1, "请输入证书路径"),
+  privateKeyPath: z.string().min(1, "请输入私钥路径"),
+  reloadCommand: z.string().min(1, "请输入重载命令"),
+  healthCheckCommand: z.string(),
+  timeoutSeconds: z.coerce.number().int().min(1).max(300),
 });
 
 type ServerForm = z.infer<typeof serverSchema>;
@@ -84,7 +90,7 @@ export function ServerFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{server ? "编辑服务器" : "添加服务器"}</DialogTitle>
           <DialogDescription>配置 SSH 连接与主机指纹；私钥由共享设置统一管理。</DialogDescription>
@@ -130,6 +136,24 @@ export function ServerFormDialog({
                 </FormItem>
               )}
             />
+            <details className="rounded-lg border px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium">高级部署配置</summary>
+              <div className="mt-4 space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <TextField control={form.control} name="certPath" label="远端证书路径" placeholder="/etc/nginx/ssl/fullchain.pem" />
+                  <TextField control={form.control} name="privateKeyPath" label="远端私钥路径" placeholder="/etc/nginx/ssl/privkey.pem" />
+                </div>
+                <TextField control={form.control} name="reloadCommand" label="重载命令" placeholder="nginx -s reload" />
+                <CommandField control={form.control} name="healthCheckCommand" label="健康检查命令（可选）" placeholder="curl -fsS http://127.0.0.1/health" />
+                <FormField control={form.control} name="timeoutSeconds" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>单台超时（秒）</FormLabel>
+                    <FormControl><Input type="number" min={1} max={300} {...field} onChange={(event) => field.onChange(event.target.valueAsNumber)} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
+            </details>
             <Button className="w-full" disabled={busy}>
               {busy ? "保存中..." : server ? "保存修改" : "保存服务器"}
             </Button>
@@ -147,7 +171,7 @@ function TextField({
   placeholder,
 }: {
   control: Control<ServerForm>;
-  name: "name" | "host" | "username" | "hostFingerprint";
+  name: "name" | "host" | "username" | "hostFingerprint" | "certPath" | "privateKeyPath" | "reloadCommand";
   label: string;
   placeholder: string;
 }) {
@@ -168,12 +192,21 @@ function TextField({
   );
 }
 
+function CommandField({ control, name, label, placeholder }: { control: Control<ServerForm>; name: "healthCheckCommand"; label: string; placeholder: string }) {
+  return <FormField control={control} name={name} render={({ field }) => <FormItem><FormLabel>{label}</FormLabel><FormControl><Textarea className="min-h-20" placeholder={placeholder} {...field} /></FormControl><FormMessage /></FormItem>} />;
+}
+
 const emptyServerForm: ServerForm = {
   name: "",
   host: "",
   port: 22,
   username: "cert",
   hostFingerprint: "",
+  certPath: "/etc/nginx/ssl/fullchain.pem",
+  privateKeyPath: "/etc/nginx/ssl/privkey.pem",
+  reloadCommand: "nginx -s reload",
+  healthCheckCommand: "",
+  timeoutSeconds: 30,
 };
 
 function toFormValues(server: ManagedServer): ServerForm {
@@ -183,5 +216,10 @@ function toFormValues(server: ManagedServer): ServerForm {
     port: server.port,
     username: server.username,
     hostFingerprint: server.hostFingerprint ?? "",
+    certPath: server.certPath,
+    privateKeyPath: server.privateKeyPath,
+    reloadCommand: server.reloadCommand,
+    healthCheckCommand: server.healthCheckCommand ?? "",
+    timeoutSeconds: server.timeoutSeconds,
   };
 }

@@ -10,7 +10,7 @@ import { recordAudit } from "@/lib/audit";
 export const runtime = "nodejs";
 
 const serverSchema = z.object({
-  name: z.string().trim().min(1).max(120), host: z.string().trim().min(1).max(253), port: z.coerce.number().int().min(1).max(65535).default(22), username: z.string().trim().min(1).max(120), hostFingerprint: z.string().trim().min(1).optional(), certPath: z.string().trim().min(1).default("/etc/nginx/ssl/fullchain.pem"), privateKeyPath: z.string().trim().min(1).default("/etc/nginx/ssl/privkey.pem"), reloadCommand: z.string().trim().min(1).default("nginx -s reload"), healthCheckCommand: z.string().trim().min(1).optional(), timeoutSeconds: z.coerce.number().int().min(1).max(300).default(30), enabled: z.coerce.boolean().default(true),
+  name: z.string().trim().min(1).max(120), host: z.string().trim().min(1).max(253), port: z.coerce.number().int().min(1).max(65535).default(22), username: z.string().trim().min(1).max(120), hostFingerprint: z.string().trim().min(1).optional(), certPath: z.string().trim().min(1).default("/etc/nginx/ssl/fullchain.pem"), privateKeyPath: z.string().trim().min(1).default("/etc/nginx/ssl/privkey.pem"), reloadCommand: z.string().trim().min(1).default("nginx -s reload"), healthCheckCommand: z.string().trim().max(1_000).transform((value) => value || null).optional(), timeoutSeconds: z.coerce.number().int().min(1).max(300).default(30), enabled: z.coerce.boolean().default(true),
 });
 
 export async function GET() {

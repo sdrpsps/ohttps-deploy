@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
 import { certificateTargets, deploymentTargets, servers } from "@/db/schema";
+import { validateCommand } from "@/deployer";
 import { recordAudit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -13,6 +14,11 @@ const patchSchema = z.object({
   port: z.coerce.number().int().min(1).max(65535).optional(),
   username: z.string().trim().min(1).max(120).optional(),
   hostFingerprint: z.string().trim().min(1).optional(),
+  certPath: z.string().trim().min(1).optional(),
+  privateKeyPath: z.string().trim().min(1).optional(),
+  reloadCommand: z.string().trim().min(1).optional(),
+  healthCheckCommand: z.string().trim().max(1_000).transform((value) => value || null).optional(),
+  timeoutSeconds: z.coerce.number().int().min(1).max(300).optional(),
   enabled: z.coerce.boolean().optional(),
 }).strict();
 
@@ -20,6 +26,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const { id } = await context.params;
   const parsed = patchSchema.safeParse(await request.json().catch(() => undefined));
   if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "invalid server fields" } }, { status: 400 });
+  try { if (parsed.data.reloadCommand) validateCommand(parsed.data.reloadCommand); if (parsed.data.healthCheckCommand) validateCommand(parsed.data.healthCheckCommand); } catch (error) { return NextResponse.json({ error: { code: "INVALID_COMMAND", message: (error as Error).message } }, { status: 400 }); }
   const [server] = await db.update(servers).set({ ...parsed.data, updatedAt: new Date() }).where(eq(servers.id, id)).returning();
   if (!server) return NextResponse.json({ error: { code: "NOT_FOUND", message: "server not found" } }, { status: 404 });
   await recordAudit("server.updated", "server", id);
