@@ -34,6 +34,7 @@ const serverSchema = z.object({
   hostFingerprint: z.string().min(1, "请输入主机指纹"),
   certPath: z.string().min(1, "请输入证书路径"),
   privateKeyPath: z.string().min(1, "请输入私钥路径"),
+  validationCommand: z.string().min(1, "请输入部署前检查命令"),
   reloadCommand: z.string().min(1, "请输入重载命令"),
   healthCheckCommand: z.string(),
   timeoutSeconds: z.coerce.number().int().min(1).max(300),
@@ -143,7 +144,8 @@ export function ServerFormDialog({
                   <TextField control={form.control} name="certPath" label="远端证书路径" placeholder="/etc/nginx/ssl/fullchain.pem" />
                   <TextField control={form.control} name="privateKeyPath" label="远端私钥路径" placeholder="/etc/nginx/ssl/privkey.pem" />
                 </div>
-                <TextField control={form.control} name="reloadCommand" label="重载命令" placeholder="nginx -s reload" />
+                <CommandField control={form.control} name="validationCommand" label="部署前检查命令" placeholder="sudo -n nginx -t" />
+                <CommandField control={form.control} name="reloadCommand" label="重载命令" placeholder="sudo -n nginx -s reload" />
                 <CommandField control={form.control} name="healthCheckCommand" label="健康检查命令（可选）" placeholder="curl -fsS http://127.0.0.1/health" />
                 <FormField control={form.control} name="timeoutSeconds" render={({ field }) => (
                   <FormItem>
@@ -171,7 +173,7 @@ function TextField({
   placeholder,
 }: {
   control: Control<ServerForm>;
-  name: "name" | "host" | "username" | "hostFingerprint" | "certPath" | "privateKeyPath" | "reloadCommand";
+  name: "name" | "host" | "username" | "hostFingerprint" | "certPath" | "privateKeyPath";
   label: string;
   placeholder: string;
 }) {
@@ -192,7 +194,7 @@ function TextField({
   );
 }
 
-function CommandField({ control, name, label, placeholder }: { control: Control<ServerForm>; name: "healthCheckCommand"; label: string; placeholder: string }) {
+function CommandField({ control, name, label, placeholder }: { control: Control<ServerForm>; name: "validationCommand" | "reloadCommand" | "healthCheckCommand"; label: string; placeholder: string }) {
   return <FormField control={control} name={name} render={({ field }) => <FormItem><FormLabel>{label}</FormLabel><FormControl><Textarea className="min-h-20" placeholder={placeholder} {...field} /></FormControl><FormMessage /></FormItem>} />;
 }
 
@@ -204,7 +206,8 @@ const emptyServerForm: ServerForm = {
   hostFingerprint: "",
   certPath: "/etc/nginx/ssl/fullchain.pem",
   privateKeyPath: "/etc/nginx/ssl/privkey.pem",
-  reloadCommand: "nginx -s reload",
+  validationCommand: "sudo -n nginx -t",
+  reloadCommand: "sudo -n nginx -s reload",
   healthCheckCommand: "",
   timeoutSeconds: 30,
 };
@@ -218,6 +221,7 @@ function toFormValues(server: ManagedServer): ServerForm {
     hostFingerprint: server.hostFingerprint ?? "",
     certPath: server.certPath,
     privateKeyPath: server.privateKeyPath,
+    validationCommand: server.validationCommand,
     reloadCommand: server.reloadCommand,
     healthCheckCommand: server.healthCheckCommand ?? "",
     timeoutSeconds: server.timeoutSeconds,

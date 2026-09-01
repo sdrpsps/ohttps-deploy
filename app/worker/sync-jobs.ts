@@ -13,7 +13,10 @@ export async function enqueueSyncJob(certificateId: string, trigger: "manual" | 
             )`,
       args: [id, certificateId, trigger, force ? 1 : 0, certificateId],
     });
-    if (inserted.rowsAffected > 0) return { id, created: true };
+    if (inserted.rowsAffected > 0) {
+      await client.execute({ sql: "INSERT INTO logs (id, sync_job_id, sequence, level, message) VALUES (?, ?, 0, 'info', '同步任务已创建，等待 Worker 接手')", args: [randomUUID(), id] });
+      return { id, created: true };
+    }
 
     const existing = await client.execute({
       sql: "SELECT id FROM certificate_sync_jobs WHERE certificate_id = ? AND status IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",

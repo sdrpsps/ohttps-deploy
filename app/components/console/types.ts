@@ -20,6 +20,7 @@ export type ManagedServer = {
   hostFingerprint: string | null;
   certPath: string;
   privateKeyPath: string;
+  validationCommand: string;
   reloadCommand: string;
   healthCheckCommand: string | null;
   timeoutSeconds: number;

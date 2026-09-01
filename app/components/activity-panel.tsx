@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ActivityTables } from "@/components/activity/activity-tables";
-import { StatusBadge } from "@/components/activity/deployment-history";
 import { DeploymentDetailPanel } from "@/components/activity/deployment-detail";
 import { DeploymentHistory } from "@/components/activity/deployment-history";
 import type { AuditEntry, Deployment, DeploymentDetail, LogEntry } from "@/components/activity/types";
@@ -17,12 +16,8 @@ type ActivityPanelProps = {
   servers: ManagedServer[];
 };
 
-type SyncTask = { id: string; certificateName: string; status: string; trigger: string; errorSummary: string | null };
-
 export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
   const queryClient = useQueryClient();
-  const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
-  useEffect(() => { setSyncTaskId(new URLSearchParams(window.location.search).get("taskId")); }, []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [certificateId, setCertificateId] = useState("");
   const [serverId, setServerId] = useState("");
@@ -36,12 +31,6 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
   const deploymentsQuery = useQuery({ queryKey: queryKeys.deployments, queryFn: () => getApiData<Deployment[]>("/api/deployments") });
   const logsQuery = useQuery({ queryKey: queryKeys.logs(query), queryFn: () => getApiData<LogEntry[]>(`/api/logs?${query}`) });
   const auditEventsQuery = useQuery({ queryKey: queryKeys.auditEvents, queryFn: () => getApiData<AuditEntry[]>("/api/audit-events") });
-  const syncTaskQuery = useQuery({
-    queryKey: queryKeys.syncJob(syncTaskId ?? ""),
-    queryFn: () => getApiData<SyncTask>(`/api/certificate-sync-jobs/${syncTaskId}`),
-    enabled: Boolean(syncTaskId),
-    refetchInterval: (current) => ["queued", "running"].includes((current.state.data as SyncTask | undefined)?.status ?? "") ? 5_000 : false,
-  });
   const selectedQuery = useQuery({
     queryKey: queryKeys.deployment(selectedId ?? ""),
     queryFn: () => getApiData<DeploymentDetail>(`/api/deployments/${selectedId}`),
@@ -50,7 +39,6 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
   const deployments = deploymentsQuery.data ?? [];
   const logs = logsQuery.data ?? [];
   const auditEvents = auditEventsQuery.data ?? [];
-  const syncTask = syncTaskQuery.data ?? null;
   const selected = selectedQuery.data ?? null;
   const historyError = [deploymentsQuery, logsQuery, auditEventsQuery].find((result) => result.error)?.error;
 
@@ -91,7 +79,6 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
 
   return (
     <div className="space-y-6">
-      {syncTask && <div className="rounded-lg border border-primary/20 bg-primary/[0.03] p-4"><div className="flex flex-wrap items-center gap-3"><h2 className="text-sm font-semibold">同步任务详情</h2><StatusBadge status={syncTask.status} /></div><p className="mt-2 text-sm">{syncTask.certificateName} · 当前阶段：{syncTask.status === "queued" ? "等待 Worker" : syncTask.status === "running" ? "获取并校验证书" : "同步已结束"}</p>{syncTask.errorSummary && <p className="mt-2 text-sm text-destructive">错误原因：{syncTask.errorSummary}</p>}<p className="mt-2 text-xs text-muted-foreground">成功后会根据部署策略自动创建部署任务。</p></div>}
       <DeploymentHistory
         certificates={certificates}
         servers={servers}

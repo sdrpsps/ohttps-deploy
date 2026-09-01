@@ -7,7 +7,7 @@ async function run() {
   const configFailure = await deployWith("config-failure");
   assert.equal(configFailure.result.ok, false);
   assert.match(configFailure.result.error ?? "", /previous certificate restored/);
-  assert.ok(configFailure.commands.includes("nginx -t"));
+  assert.ok(configFailure.commands.some((command) => command.includes("sudo -n nginx -t")));
   assert.ok(configFailure.commands.some((command) => command.includes("previous-fullchain.pem")));
 
   const timeout = await deployWith("timeout");
@@ -30,9 +30,9 @@ async function deployWith(mode: Mode) {
     },
     exec(command: string, callback: (error: null, stream: { stderr: { on: () => void }; on: (event: string, listener: (code: number) => void) => void; destroy: () => void }) => void) {
       commands.push(command);
-      if (command === "nginx -t") nginxChecks += 1;
-      const hangs = mode === "timeout" && command === "nginx -t" && nginxChecks === 2;
-      const exitCode = mode === "config-failure" && command === "nginx -t" && nginxChecks === 2 ? 1 : 0;
+      if (command.includes("sudo -n nginx -t")) nginxChecks += 1;
+      const hangs = mode === "timeout" && command.includes("sudo -n nginx -t") && nginxChecks === 2;
+      const exitCode = mode === "config-failure" && command.includes("sudo -n nginx -t") && nginxChecks === 2 ? 1 : 0;
       callback(null, {
         stderr: { on: () => undefined },
         on: (event, listener) => { if (event === "close" && !hangs) queueMicrotask(() => listener(exitCode)); },
@@ -43,7 +43,7 @@ async function deployWith(mode: Mode) {
   };
   const result = await new SSHDeployer({ privateKey: "test", clientFactory: () => client as never }).deploy({
     id: "server-1", host: "server.example.com", port: 22, username: "cert", hostFingerprint: "SHA256:test",
-    certPath: "/etc/nginx/ssl/fullchain.pem", privateKeyPath: "/etc/nginx/ssl/privkey.pem", reloadCommand: "nginx -s reload", timeoutSeconds: 0.01,
+    certPath: "/etc/nginx/ssl/fullchain.pem", privateKeyPath: "/etc/nginx/ssl/privkey.pem", validationCommand: "sudo -n nginx -t", reloadCommand: "sudo -n nginx -s reload", timeoutSeconds: 0.01,
   }, { certificatePath: "tests/fixtures/test-cert.pem", privateKeyPath: "tests/fixtures/test-key.pem" });
   return { result, commands, destroyed };
 }

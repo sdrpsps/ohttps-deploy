@@ -89,6 +89,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if ! [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    echo -e "${RED}❌ 错误：部署用户名只能包含小写字母、数字、下划线和连字符。${RESET}" >&2
+    exit 1
+fi
+if [[ "$CERT_DIR" != /* || "$CERT_DIR" == "/" || "$CERT_DIR" == "/etc" || "$CERT_DIR" == "/etc/nginx" || "$CERT_DIR" == *$'\n'* || "$CERT_DIR" == *$'\r'* ]]; then
+    echo -e "${RED}❌ 错误：证书目录必须是安全的绝对路径，不能是 /、/etc 或 /etc/nginx。${RESET}" >&2
+    exit 1
+fi
+if [[ "$SSH_PUBLIC_KEY" == *$'\n'* || "$SSH_PUBLIC_KEY" == *$'\r'* ]]; then
+    echo -e "${RED}❌ 错误：SSH 公钥必须是单行内容。${RESET}" >&2
+    exit 1
+fi
+if [[ -n "$DOCKER_CONTAINER" && ! "$DOCKER_CONTAINER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+    echo -e "${RED}❌ 错误：Docker 容器名只能包含字母、数字、点、下划线和连字符。${RESET}" >&2
+    exit 1
+fi
+
 # 2. 检查 root 权限
 if [[ "$(id -u)" -ne 0 ]]; then
     echo -e "${RED}❌ 错误：请使用 root 用户或通过 sudo 运行此脚本。${RESET}" >&2
@@ -117,7 +134,11 @@ else
 fi
 
 # 4. 配置 SSH 目录与公钥授权
-USER_HOME=$(eval echo "~$DEPLOY_USER")
+USER_HOME=$(getent passwd "$DEPLOY_USER" | awk -F: 'NR == 1 { print $6 }')
+if [[ -z "$USER_HOME" ]]; then
+    echo -e "${RED}❌ 错误：无法获取用户 '$DEPLOY_USER' 的主目录。${RESET}" >&2
+    exit 1
+fi
 SSH_DIR="$USER_HOME/.ssh"
 AUTH_KEYS="$SSH_DIR/authorized_keys"
 
@@ -152,7 +173,6 @@ TMP_SUDOERS="/tmp/sudoers_${DEPLOY_USER}_$$"
 echo -e "🛡️  正在配置 sudoers 最小特权规则: ${SUDOERS_FILE} ..."
 
 NGINX_BIN="$(command -v nginx 2>/dev/null || echo '/usr/sbin/nginx')"
-SYSTEMCTL_BIN="$(command -v systemctl 2>/dev/null || echo '/bin/systemctl')"
 DOCKER_BIN="$(command -v docker 2>/dev/null || echo '/usr/bin/docker')"
 
 cat <<EOF > "$TMP_SUDOERS"
@@ -163,17 +183,18 @@ cat <<EOF > "$TMP_SUDOERS"
 EOF
 
 if [[ -n "$DOCKER_CONTAINER" ]]; then
+    VALIDATION_COMMAND="sudo -n $DOCKER_BIN exec $DOCKER_CONTAINER nginx -t"
+    RELOAD_COMMAND="sudo -n $DOCKER_BIN exec $DOCKER_CONTAINER nginx -s reload"
     cat <<EOF >> "$TMP_SUDOERS"
-$DEPLOY_USER ALL=(ALL) NOPASSWD: $DOCKER_BIN exec $DOCKER_CONTAINER nginx -t
-$DEPLOY_USER ALL=(ALL) NOPASSWD: $DOCKER_BIN exec $DOCKER_CONTAINER nginx -s reload
+$DEPLOY_USER ALL=(root) NOPASSWD: $DOCKER_BIN exec $DOCKER_CONTAINER nginx -t
+$DEPLOY_USER ALL=(root) NOPASSWD: $DOCKER_BIN exec $DOCKER_CONTAINER nginx -s reload
 EOF
 else
+    VALIDATION_COMMAND="sudo -n $NGINX_BIN -t"
+    RELOAD_COMMAND="sudo -n $NGINX_BIN -s reload"
     cat <<EOF >> "$TMP_SUDOERS"
-$DEPLOY_USER ALL=(ALL) NOPASSWD: $NGINX_BIN -t
-$DEPLOY_USER ALL=(ALL) NOPASSWD: $NGINX_BIN -s reload
-$DEPLOY_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_BIN reload nginx
-$DEPLOY_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_BIN status nginx
-$DEPLOY_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_BIN is-active nginx
+$DEPLOY_USER ALL=(root) NOPASSWD: $NGINX_BIN -t
+$DEPLOY_USER ALL=(root) NOPASSWD: $NGINX_BIN -s reload
 EOF
 fi
 
@@ -226,23 +247,20 @@ if [[ "$SKIP_TEST" = false ]]; then
         if sudo -u "$DEPLOY_USER" sudo -n "$DOCKER_BIN" exec "$DOCKER_CONTAINER" nginx -t &>/dev/null; then
             echo -e "${GREEN}[通过] (Docker 容器 nginx -t 执行成功)${RESET}"
         else
-            # 容器未启动时检查 sudo 授权规则列表
-            if sudo -u "$DEPLOY_USER" sudo -n -l 2>/dev/null | grep -q "$DOCKER_CONTAINER"; then
-                echo -e "${GREEN}[通过] (Sudoers 规则匹配，容器当前未运行或需运行后复验)${RESET}"
-            else
-                echo -e "${RED}[失败] Sudo 免密规则未生效${RESET}"
-                TEST_FAILED=1
-            fi
+            echo -e "${RED}[失败] Docker 容器 nginx -t 未通过；请确认容器正在运行、证书目录已挂载且 Nginx 配置有效。${RESET}"
+            TEST_FAILED=1
         fi
     else
         if [[ -x "$NGINX_BIN" ]]; then
             if sudo -u "$DEPLOY_USER" sudo -n "$NGINX_BIN" -t &>/dev/null; then
                 echo -e "${GREEN}[通过] (nginx -t 执行成功)${RESET}"
             else
-                echo -e "${YELLOW}[提示] nginx -t 返回非0 (可能是默认配置暂未加载或缺少证书)，但 sudo 免密执行成功${RESET}"
+                echo -e "${RED}[失败] nginx -t 未通过；请先修复 Nginx 配置、证书路径或私钥权限。${RESET}"
+                TEST_FAILED=1
             fi
         else
-            echo -e "${YELLOW}[提示] 未检测到本地 nginx 命令，请确保已安装 Nginx${RESET}"
+            echo -e "${RED}[失败] 未检测到本地 nginx 命令。${RESET}"
+            TEST_FAILED=1
         fi
     fi
 
@@ -263,9 +281,12 @@ echo -e "  • 用户名 (Username):        ${BOLD}${DEPLOY_USER}${RESET}"
 echo -e "  • 证书路径 (Cert Path):     ${BOLD}${CERT_DIR}/fullchain.pem${RESET}"
 echo -e "  • 私钥路径 (Key Path):      ${BOLD}${CERT_DIR}/privkey.pem${RESET}"
 if [[ -n "$DOCKER_CONTAINER" ]]; then
-    echo -e "  • 重载命令 (Reload Command): ${BOLD}sudo docker exec ${DOCKER_CONTAINER} nginx -s reload${RESET}"
+    echo -e "  • 部署前检查命令:         ${BOLD}${VALIDATION_COMMAND}${RESET}"
+    echo -e "  • 重载命令 (Reload Command): ${BOLD}${RELOAD_COMMAND}${RESET}"
+    echo -e "  • 注意：证书目录必须以相同路径挂载到容器，并被容器内 Nginx 配置引用。"
 else
-    echo -e "  • 重载命令 (Reload Command): ${BOLD}sudo nginx -t && sudo systemctl reload nginx${RESET}"
+    echo -e "  • 部署前检查命令:         ${BOLD}${VALIDATION_COMMAND}${RESET}"
+    echo -e "  • 重载命令 (Reload Command): ${BOLD}${RELOAD_COMMAND}${RESET}"
 fi
 echo ""
 echo "💡 获取本机 SSH SHA256 指纹的方法（在控制台添加服务器时填入）："

@@ -20,6 +20,7 @@ import { reserveOhttpsCall } from "./worker/daily-limit";
 import { archiveExpiredRecords } from "./worker/archive";
 import { watchCancellation } from "./worker/cancellation";
 import { startHeartbeat } from "./worker/heartbeat";
+import { nextScanAt } from "./worker/schedule";
 
 const config = loadConfig();
 const logger = createLogger("worker");
@@ -33,6 +34,7 @@ process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
 
 let polling = false;
+let scheduledScanAt = 0;
 const workerLease = new WorkerLease();
 async function recordHeartbeat() {
   await db.insert(settings).values({ key: "worker_heartbeat", value: new Date().toISOString() }).onConflictDoUpdate({ target: settings.key, set: { value: new Date().toISOString(), updatedAt: new Date() } });
@@ -50,7 +52,12 @@ async function pollQueue() {
     runtimeSettings = await loadRuntimeSettings();
     assertLease();
     await recordHeartbeat();
-    await scanCertificates();
+    const now = Date.now();
+    const next = nextScanAt(scheduledScanAt, now, runtimeSettings.schedulerIntervalMinutes);
+    if (next !== scheduledScanAt) {
+      scheduledScanAt = next;
+      await scanCertificates();
+    }
     assertLease();
     await processSyncQueue();
     assertLease();
@@ -107,39 +114,57 @@ async function processSyncJob(jobId: string) {
   const [job] = await db.update(certificateSyncJobs).set({ status: "running", startedAt: new Date(), updatedAt: new Date() })
     .where(and(eq(certificateSyncJobs.id, jobId), eq(certificateSyncJobs.status, "queued"))).returning();
   if (!job) return;
+  let sequence = 0;
+  const progress = async (phase: string, message: string, level: "info" | "warn" | "error" = "info") => {
+    sequence += 1;
+    await db.update(certificateSyncJobs).set({ phase, updatedAt: new Date() }).where(eq(certificateSyncJobs.id, jobId));
+    await db.insert(logs).values({ id: randomUUID(), syncJobId: jobId, sequence, level, message });
+  };
+  await progress("checking", "Worker 已接手任务，正在检查本地证书版本");
   const [certificate] = await db.select().from(certificates).where(eq(certificates.id, job.certificateId)).limit(1);
-  if (!certificate || certificate.status !== "active") return finishSyncJob(jobId, "cancelled", "certificate is unavailable or disabled");
+  if (!certificate || certificate.status !== "active") {
+    await progress("cancelled", "证书不存在或已停用，任务已取消", "warn");
+    return finishSyncJob(jobId, "cancelled", "certificate is unavailable or disabled");
+  }
   try {
     const current = await certificateStore.getCurrent(certificate.id);
     if (!runtimeSettings.ohttpsApiId || !runtimeSettings.ohttpsApiKey) throw new Error("ohttps credentials are not configured");
+    await progress("quota", "正在检查本次 ohttps 调用额度");
     await consumeOhttpsCall();
+    await progress("fetching", "正在从 ohttps 获取最新证书");
     const payload = await new OHTTPSClient(runtimeSettings.ohttpsApiId, runtimeSettings.ohttpsApiKey).getCertificate(certificate.ohttpsCertificateId);
+    await progress("validating", "正在校验证书、私钥与域名");
     const parsed = validateCertificatePair(payload.fullChainCerts, payload.certKey, { requiredSans: [certificate.domain] });
     const now = new Date();
     if (current && current.fingerprint === parsed.fingerprint && current.notAfter.getTime() === parsed.notAfter.getTime()) {
       await db.update(certificates).set({ expiresAt: parsed.notAfter, lastCheckedAt: now, lastSyncAt: now, updatedAt: now }).where(eq(certificates.id, certificate.id));
       await markSyncedCurrentVersion(certificate.id, current.fingerprint);
+      await progress("succeeded", "远端证书与当前版本一致，无需部署");
       return finishSyncJob(jobId, "succeeded");
     }
+    await progress("saving", "发现新证书版本，正在安全保存");
     const stored = await certificateStore.saveVersion(certificate.id, { certificatePem: payload.fullChainCerts, privateKeyPem: payload.certKey, fetchedAt: now, metadata: { source: "ohttps" } });
     const [latest] = await db.select({ version: certificateVersions.version }).from(certificateVersions).where(eq(certificateVersions.certificateId, certificate.id)).orderBy(desc(certificateVersions.version)).limit(1);
     const versionId = randomUUID();
     await db.insert(certificateVersions).values({ id: versionId, certificateId: certificate.id, version: (latest?.version ?? 0) + 1, fingerprint: stored.fingerprint, fetchedAt: now, expiresAt: stored.notAfter, certPath: `${stored.directory}/fullchain.pem`, privateKeyPath: `${stored.directory}/privkey.pem`, validationStatus: "valid" });
     await db.update(certificates).set({ currentVersionId: versionId, expiresAt: stored.notAfter, lastCheckedAt: now, lastSyncAt: now, updatedAt: now }).where(eq(certificates.id, certificate.id));
     await markSyncedCurrentVersion(certificate.id, stored.fingerprint);
+    await progress("deploying", "新版本已保存，正在按部署策略创建部署任务");
     await createAutoDeployment(certificate.id, versionId);
     await queueNotification("certificate.synced", "certificate", certificate.id, "success");
+    await progress("succeeded", "同步完成；如有已勾选的部署服务器，将在部署任务中继续执行");
     await finishSyncJob(jobId, "succeeded");
   } catch (error) {
     const message = redactSensitive(error instanceof Error ? error.message : "certificate sync failed", runtimeSettings.ohttpsApiKey);
     await db.update(certificates).set({ lastCheckedAt: new Date(), updatedAt: new Date() }).where(eq(certificates.id, job.certificateId));
+    await progress("failed", `同步失败：${message}`, "error");
     await finishSyncJob(jobId, "failed", message);
     await queueNotification("certificate.sync_failed", "certificate", job.certificateId, "failure", message);
   }
 }
 
 async function finishSyncJob(id: string, status: "succeeded" | "failed" | "cancelled", errorSummary?: string) {
-  await db.update(certificateSyncJobs).set({ status, errorSummary: errorSummary ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(certificateSyncJobs.id, id));
+  await db.update(certificateSyncJobs).set({ status, phase: status, errorSummary: errorSummary ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(certificateSyncJobs.id, id));
 }
 
 async function createAutoDeployment(certificateId: string, certificateVersionId: string) {
@@ -172,7 +197,7 @@ async function markSyncedCurrentVersion(certificateId: string, fingerprint: stri
 async function processDeployment(deploymentId: string) {
   const [deployment] = await db.update(deployments).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(and(eq(deployments.id, deploymentId), eq(deployments.status, "queued"))).returning();
   if (!deployment) return;
-  const targets = await db.select({ id: deploymentTargets.id, serverId: servers.id, name: servers.name, host: servers.host, port: servers.port, username: servers.username, hostFingerprint: servers.hostFingerprint, certPath: servers.certPath, privateKeyPath: servers.privateKeyPath, reloadCommand: servers.reloadCommand, healthCheckCommand: servers.healthCheckCommand, timeoutSeconds: servers.timeoutSeconds }).from(deploymentTargets).innerJoin(servers, eq(deploymentTargets.serverId, servers.id)).where(eq(deploymentTargets.deploymentId, deploymentId));
+  const targets = await db.select({ id: deploymentTargets.id, serverId: servers.id, name: servers.name, host: servers.host, port: servers.port, username: servers.username, hostFingerprint: servers.hostFingerprint, certPath: servers.certPath, privateKeyPath: servers.privateKeyPath, validationCommand: servers.validationCommand, reloadCommand: servers.reloadCommand, healthCheckCommand: servers.healthCheckCommand, timeoutSeconds: servers.timeoutSeconds }).from(deploymentTargets).innerJoin(servers, eq(deploymentTargets.serverId, servers.id)).where(eq(deploymentTargets.deploymentId, deploymentId));
   const [version] = await db.select({ certPath: certificateVersions.certPath, privateKeyPath: certificateVersions.privateKeyPath }).from(certificateVersions).where(eq(certificateVersions.id, deployment.certificateVersionId)).limit(1);
   if (!version) { await failDeployment(deploymentId, "certificate version not found"); return; }
   const [sharedKey] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "shared_ssh_private_key")).limit(1);
@@ -255,7 +280,7 @@ async function run() {
   try {
     while (!stopping) {
       await pollQueue();
-      await new Promise((resolve) => setTimeout(resolve, Math.max(15_000, runtimeSettings.schedulerIntervalMinutes * 60_000)));
+      await new Promise((resolve) => setTimeout(resolve, 15_000));
     }
   } finally { stopHeartbeat?.(); stopHeartbeat = undefined; }
 }

@@ -33,7 +33,8 @@ type CertificatePanelProps = {
   onDelete: (target: DeleteTarget) => void;
   ohttpsConfigured: boolean;
   deploymentTargetCount: number;
-  onNavigate: (section: "servers" | "policies" | "activity") => void;
+  onNavigate: (section: "servers" | "policies") => void;
+  onViewSyncJob: (id: string) => void;
   onConfigureSettings: () => void;
 };
 
@@ -49,6 +50,7 @@ export function CertificatePanel({
   ohttpsConfigured,
   deploymentTargetCount,
   onNavigate,
+  onViewSyncJob,
   onConfigureSettings,
 }: CertificatePanelProps) {
   const [confirming, setConfirming] = useState<Certificate | null>(null);
@@ -91,6 +93,7 @@ export function CertificatePanel({
                   deploymentTargetCount={deploymentTargetCount}
                   latestJob={jobs.find((job) => job.certificateId === certificate.id)}
                   onNavigate={onNavigate}
+                  onViewSyncJob={onViewSyncJob}
                   onConfigureSettings={onConfigureSettings}
                   onConfirmRefresh={setConfirming}
                 />
@@ -99,7 +102,11 @@ export function CertificatePanel({
           </TableBody>
         </Table>
       </CardContent>
-    </Card><Card><CardHeader><CardTitle>同步任务</CardTitle><CardDescription>最近的 ohttps 获取记录与失败原因</CardDescription></CardHeader><CardContent><Table><TableHeader><TableRow><TableHead>证书</TableHead><TableHead>触发</TableHead><TableHead>状态</TableHead><TableHead>时间</TableHead><TableHead>错误</TableHead></TableRow></TableHeader><TableBody>{jobs.map((job) => <TableRow key={job.id}><TableCell>{job.certificateName}</TableCell><TableCell>{job.trigger === "manual" ? "手动" : "定时"}</TableCell><TableCell><Badge variant={job.status === "succeeded" ? "default" : job.status === "failed" ? "destructive" : "secondary"}>{({ queued: "排队中", running: "同步中", succeeded: "成功", failed: "失败", cancelled: "已取消" } as Record<string, string>)[job.status] ?? job.status}</Badge></TableCell><TableCell>{formatDate(job.createdAt)}</TableCell><TableCell className="text-xs text-destructive">{job.errorSummary ?? "-"}</TableCell></TableRow>)}{jobs.length === 0 && <EmptyRow text="暂无同步任务" />}</TableBody></Table></CardContent></Card>
+    </Card>
+    <Card>
+      <CardHeader><CardTitle>同步任务</CardTitle><CardDescription>最近的 ohttps 获取记录。打开即可查看实时与历史日志。</CardDescription></CardHeader>
+      <CardContent><Table><TableHeader><TableRow><TableHead>证书</TableHead><TableHead>触发</TableHead><TableHead>状态</TableHead><TableHead>时间</TableHead><TableHead>错误</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{jobs.map((job) => <TableRow key={job.id}><TableCell>{job.certificateName}</TableCell><TableCell>{job.trigger === "manual" ? "手动" : "定时"}</TableCell><TableCell><Badge variant={job.status === "succeeded" ? "default" : job.status === "failed" ? "destructive" : "secondary"}>{({ queued: "排队中", running: "同步中", succeeded: "成功", failed: "失败", cancelled: "已取消" } as Record<string, string>)[job.status] ?? job.status}</Badge></TableCell><TableCell>{formatDate(job.createdAt)}</TableCell><TableCell className="text-xs text-destructive">{job.errorSummary ?? "-"}</TableCell><TableCell className="text-right"><Button variant="outline" size="sm" onClick={() => onViewSyncJob(job.id)}>查看</Button></TableCell></TableRow>)}{jobs.length === 0 && <EmptyRow text="暂无同步任务" columns={6} />}</TableBody></Table></CardContent>
+    </Card>
       <Dialog open={Boolean(confirming)} onOpenChange={(open) => !open && setConfirming(null)}><DialogContent><DialogHeader><DialogTitle>确认立即同步？</DialogTitle><DialogDescription>将调用 ohttps 获取“{confirming?.name}”的最新证书。该操作可能产生费用，成功后会根据部署策略自动创建部署任务。</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setConfirming(null)}>取消</Button><Button onClick={() => { if (confirming) onRefresh(confirming.id); setConfirming(null); }}>确认同步</Button></DialogFooter></DialogContent></Dialog>
     </div>
   );
@@ -114,9 +121,10 @@ function CertificateRow({
   deploymentTargetCount,
   latestJob,
   onNavigate,
+  onViewSyncJob,
   onConfigureSettings,
   onConfirmRefresh,
-}: Pick<CertificatePanelProps, "busy" | "onEdit" | "onDelete" | "ohttpsConfigured" | "deploymentTargetCount" | "onNavigate" | "onConfigureSettings"> & { certificate: Certificate; latestJob?: { status: string; errorSummary: string | null } | undefined; onConfirmRefresh: (certificate: Certificate) => void }) {
+}: Pick<CertificatePanelProps, "busy" | "onEdit" | "onDelete" | "ohttpsConfigured" | "deploymentTargetCount" | "onNavigate" | "onConfigureSettings" | "onViewSyncJob"> & { certificate: Certificate; latestJob?: { id: string; status: string; errorSummary: string | null } | undefined; onConfirmRefresh: (certificate: Certificate) => void }) {
   const days = daysUntil(certificate.expiresAt);
   const needsAttention = days !== null && days <= certificate.renewBeforeDays;
   const statusClass = needsAttention && certificate.status === "active"
@@ -126,7 +134,7 @@ function CertificateRow({
   const statusVariant = certificate.status === "disabled" ? "secondary" : needsAttention ? "outline" : "default";
 
   const syncInProgress = latestJob?.status === "queued" || latestJob?.status === "running";
-  const action = !ohttpsConfigured ? { label: "去配置 ohttps 凭据", onClick: onConfigureSettings } : deploymentTargetCount === 0 ? { label: "配置部署服务器", onClick: () => onNavigate("servers") } : syncInProgress ? { label: "查看任务", onClick: () => onNavigate("activity") } : latestJob?.status === "failed" ? { label: "查看原因 / 重试", onClick: () => onConfirmRefresh(certificate) } : { label: "立即同步", onClick: () => onConfirmRefresh(certificate) };
+  const action = !ohttpsConfigured ? { label: "去配置 ohttps 凭据", onClick: onConfigureSettings } : deploymentTargetCount === 0 ? { label: "配置部署服务器", onClick: () => onNavigate("servers") } : syncInProgress ? { label: "查看同步", onClick: () => onViewSyncJob(latestJob!.id) } : { label: latestJob?.status === "failed" ? "重新同步" : "立即同步", onClick: () => onConfirmRefresh(certificate) };
   return (
     <TableRow>
       <TableCell className="font-medium">
@@ -153,6 +161,7 @@ function CertificateRow({
         <Button variant="outline" size="sm" disabled={busy} onClick={action.onClick}>
           <RefreshCw /> {action.label}
         </Button>
+        {latestJob && !syncInProgress && <Button variant="ghost" size="sm" onClick={() => onViewSyncJob(latestJob.id)}>查看同步</Button>}
         <Button variant="ghost" size="icon" disabled={busy} onClick={() => onEdit(certificate)} aria-label={`编辑证书 ${certificate.name}`}>
           <Pencil className="size-4" />
         </Button>
@@ -170,10 +179,10 @@ function CertificateRow({
   );
 }
 
-function EmptyRow({ text }: { text: string }) {
+function EmptyRow({ text, columns = 5 }: { text: string; columns?: number }) {
   return (
     <TableRow>
-      <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+      <TableCell colSpan={columns} className="h-24 text-center text-muted-foreground">
         {text}
       </TableCell>
     </TableRow>

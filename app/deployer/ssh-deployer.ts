@@ -53,7 +53,7 @@ export class SSHDeployer implements Deployer {
   }
 
   async deploy(target: DeployTarget, material: DeploymentMaterial, options: { dryRun?: boolean; signal?: AbortSignal } = {}): Promise<DeploymentResult> {
-    try { validateCommand(target.reloadCommand); if (target.healthCheckCommand) validateCommand(target.healthCheckCommand); } catch (error) { return { targetId: target.id, ok: false, error: (error as Error).message }; }
+    try { validateCommand(target.validationCommand); validateCommand(target.reloadCommand); if (target.healthCheckCommand) validateCommand(target.healthCheckCommand); } catch (error) { return { targetId: target.id, ok: false, error: (error as Error).message }; }
     if (options.dryRun) return { targetId: target.id, ok: true };
     if (options.signal?.aborted) return { targetId: target.id, ok: false, error: "cancelled" };
     await Promise.all([readFile(material.certificatePath), readFile(material.privateKeyPath)]);
@@ -69,7 +69,7 @@ export class SSHDeployer implements Deployer {
     let preserveArtifacts = false;
     try {
       await new Promise<void>((resolve, reject) => { client.once("ready", () => resolve()).once("error", reject).connect(this.connectConfig(target)); });
-      await this.exec(client, "nginx -t", commandOptions);
+      await this.exec(client, target.validationCommand, commandOptions);
       await this.exec(client, `mkdir -p ${shellQuote(tempRoot)}`, commandOptions);
       await new Promise<void>((resolve, reject) => client.sftp((error, sftp) => {
         if (error || !sftp) return reject(error ?? new Error("sftp unavailable"));
@@ -83,7 +83,7 @@ export class SSHDeployer implements Deployer {
       await this.exec(client, backupCommand(target.privateKeyPath, backupKey, missingKey), commandOptions);
       replacementStarted = true;
       await this.exec(client, `mv ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} ${shellQuote(target.certPath)} && mv ${shellQuote(posix.join(tempRoot, "privkey.pem"))} ${shellQuote(target.privateKeyPath)}`, commandOptions);
-      await this.exec(client, "nginx -t", commandOptions);
+      await this.exec(client, target.validationCommand, commandOptions);
       await this.exec(client, target.reloadCommand, commandOptions);
       if (target.healthCheckCommand) await this.exec(client, target.healthCheckCommand, commandOptions);
       return { targetId: target.id, ok: true, exitCode: 0 };
@@ -91,7 +91,7 @@ export class SSHDeployer implements Deployer {
       let message = sanitizeError((error as Error).message);
       if (replacementStarted) {
         try {
-          await this.exec(client, `${restoreCommand(target.certPath, backupCert, missingCert)} && ${restoreCommand(target.privateKeyPath, backupKey, missingKey)} && nginx -t && ${target.reloadCommand}`, commandOptions);
+          await this.exec(client, `${restoreCommand(target.certPath, backupCert, missingCert)} && ${restoreCommand(target.privateKeyPath, backupKey, missingKey)} && ${target.validationCommand} && ${target.reloadCommand}`, commandOptions);
           message = `${message}; previous certificate restored`;
         } catch (rollbackError) {
           preserveArtifacts = true;
@@ -120,7 +120,7 @@ export class SSHDeployer implements Deployer {
       const abort = () => { activeStream?.destroy(); finish(() => reject(new Error("cancelled"))); };
       const timeout = setTimeout(() => { activeStream?.destroy(); finish(() => reject(new Error(`remote command timed out after ${options.timeoutMs}ms`))); }, options.timeoutMs);
       options.signal?.addEventListener("abort", abort, { once: true });
-      client.exec(command, (error, stream) => {
+      client.exec(`PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PATH; ${command}`, (error, stream) => {
         if (error) { finish(() => reject(error)); return; }
         activeStream = stream;
         let output = "";

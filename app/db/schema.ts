@@ -44,7 +44,8 @@ export const servers = sqliteTable("servers", {
   authRef: text("auth_ref").notNull(),
   certPath: text("cert_path").notNull().default("/etc/nginx/ssl/fullchain.pem"),
   privateKeyPath: text("private_key_path").notNull().default("/etc/nginx/ssl/privkey.pem"),
-  reloadCommand: text("reload_command").notNull().default("nginx -s reload"),
+  validationCommand: text("validation_command").notNull().default("sudo -n nginx -t"),
+  reloadCommand: text("reload_command").notNull().default("sudo -n nginx -s reload"),
   healthCheckCommand: text("health_check_command"),
   timeoutSeconds: integer("timeout_seconds").notNull().default(30),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
@@ -90,11 +91,17 @@ export const logs = sqliteTable("logs", {
   id: text("id").primaryKey(),
   deploymentId: text("deployment_id").references(() => deployments.id),
   targetId: text("target_id").references(() => deploymentTargets.id),
+  syncJobId: text("sync_job_id").references(() => certificateSyncJobs.id),
   sequence: integer("sequence").notNull(),
   level: text("level", { enum: ["debug", "info", "warn", "error"] }).notNull().default("info"),
   message: text("message").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(sql`(unixepoch() * 1000)`),
-}, (table) => ({ logSequenceIdx: uniqueIndex("logs_deployment_sequence_idx").on(table.deploymentId, table.sequence), logCreatedIdx: index("logs_created_at_idx").on(table.createdAt) }));
+}, (table) => ({
+  logSequenceIdx: uniqueIndex("logs_deployment_sequence_idx").on(table.deploymentId, table.sequence),
+  syncJobSequenceIdx: uniqueIndex("logs_sync_job_sequence_idx").on(table.syncJobId, table.sequence),
+  syncJobIdx: index("logs_sync_job_idx").on(table.syncJobId),
+  logCreatedIdx: index("logs_created_at_idx").on(table.createdAt),
+}));
 
 export const notifications = sqliteTable("notifications", {
   id: text("id").primaryKey(),
@@ -119,6 +126,7 @@ export const certificateSyncJobs = sqliteTable("certificate_sync_jobs", {
   trigger: text("trigger", { enum: ["manual", "scheduled"] }).notNull(),
   force: integer("force", { mode: "boolean" }).notNull().default(false),
   status: text("status", { enum: ["queued", "running", "succeeded", "failed", "cancelled"] }).notNull().default("queued"),
+  phase: text("phase").notNull().default("queued"),
   errorSummary: text("error_summary"),
   startedAt: integer("started_at", { mode: "timestamp_ms" }),
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),

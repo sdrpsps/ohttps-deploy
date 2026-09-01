@@ -36,6 +36,20 @@
       "when": 1788202000000,
       "tag": "0004_better-auth-core",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788253273174,
+      "tag": "0005_brief_karma",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788256453583,
+      "tag": "0006_large_doctor_doom",
+      "breakpoints": true
     }
   ]
 }

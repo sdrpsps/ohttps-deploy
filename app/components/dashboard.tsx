@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Activity, Bell, LayoutDashboard, Server, Settings2, ShieldCheck, KeyRound, Workflow } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ActivityPanel } from "@/components/activity-panel";
 import { NotificationPanel } from "@/components/notification-panel";
@@ -18,6 +18,7 @@ import { ServerFormDialog } from "@/components/console/server-form-dialog";
 import { ServerPanel } from "@/components/console/server-panel";
 import { SettingsDialog, type SettingsSummary } from "@/components/console/settings-dialog";
 import { SshKeyDialog } from "@/components/console/ssh-key-dialog";
+import { SyncTaskSheet } from "@/components/console/sync-task-sheet";
 import { OnboardingWizard } from "@/components/console/onboarding-wizard";
 import { daysUntil } from "@/lib/utils";
 import { getApiData, queryKeys } from "@/lib/api";
@@ -53,6 +54,7 @@ const navigation: NavigationItem[] = [
 
 export default function Dashboard({ section = "overview" }: { section?: DashboardSection }) {
   const router = useRouter();
+  const pathname = usePathname();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [certificateDialogOpen, setCertificateDialogOpen] = useState(false);
@@ -63,6 +65,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
   const [editingServer, setEditingServer] = useState<ManagedServer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
 
   const [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery] = useQueries({ queries: [
     { queryKey: queryKeys.certificates, queryFn: () => getApiData<Certificate[]>("/api/certificates"), enabled: ["overview", "certificates", "policies", "activity"].includes(section) },
@@ -87,6 +90,8 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   useEffect(() => {
     if (loadError instanceof Error) toast.error(loadError.message);
   }, [loadError]);
+
+  useEffect(() => { setSyncTaskId(new URLSearchParams(window.location.search).get("syncTaskId")); }, []);
 
   async function reload() {
     await queryClient.invalidateQueries();
@@ -158,7 +163,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
       const body = await response.json().catch(() => null);
       if (!response.ok) { toast.error(body?.error?.message ?? "同步未创建"); return; }
       toast.success("同步任务已创建");
-      router.push(`/deployments?taskId=${body?.data?.taskId ?? ""}`);
+      openSyncTask(body?.data?.taskId ?? "");
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "同步未创建"); }
     finally { setBusy(false); }
   }
@@ -193,6 +198,21 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     if (item) router.push(item.href);
   };
 
+  const openSyncTask = (id: string) => {
+    if (!id) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("syncTaskId", id);
+    setSyncTaskId(id);
+    router.push(`${pathname}?${params.toString()}`);
+  };
+
+  const closeSyncTask = () => {
+    const params = new URLSearchParams(window.location.search);
+    params.delete("syncTaskId");
+    setSyncTaskId(null);
+    router.replace(params.size ? `${pathname}?${params.toString()}` : pathname);
+  };
+
   const content = {
     overview: (
       <OverviewPanel
@@ -222,6 +242,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         ohttpsConfigured={settings?.ohttpsConfigured ?? false}
         deploymentTargetCount={policyCount}
         onNavigate={(target) => navigate(target)}
+        onViewSyncJob={openSyncTask}
         onConfigureSettings={() => setSettingsDialogOpen(true)}
       />
     ),
@@ -327,6 +348,8 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         onConfirm={deleteSelected}
       />
+
+      <SyncTaskSheet taskId={syncTaskId} onOpenChange={(open) => !open && closeSyncTask()} />
     </>
   );
 }

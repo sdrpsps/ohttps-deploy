@@ -10,6 +10,7 @@ export const queryKeys = {
   auditEvents: ["audit-events"] as const,
   syncJobs: ["certificate-sync-jobs"] as const,
   syncJob: (id: string) => ["certificate-sync-jobs", id] as const,
+  syncJobLogs: (id: string) => ["certificate-sync-jobs", id, "logs"] as const,
   notifications: ["notifications"] as const,
 };
 
