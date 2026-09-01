@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 
 const schema = z.object({
   currentPassword: z.string().min(1, "请输入当前密码"),
-  newPassword: z.string().min(12, "新密码至少需要 12 个字符").max(200),
+  newPassword: z.string().min(8, "新密码至少需要 8 个字符").max(200),
   confirmPassword: z.string(),
 }).refine((value) => value.newPassword === value.confirmPassword, { path: ["confirmPassword"], message: "两次输入的新密码不一致" });
 
@@ -38,7 +38,7 @@ export function ChangePasswordDialog({ open, busy, onOpenChange, onSave }: Chang
       <DialogContent>
         <DialogHeader>
           <DialogTitle>修改管理员密码</DialogTitle>
-          <DialogDescription>新密码至少 12 个字符。修改成功后请使用新密码登录。</DialogDescription>
+          <DialogDescription>新密码至少 8 个字符。修改成功后请使用新密码登录。</DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form className="space-y-4" onSubmit={form.handleSubmit(submit)}>
