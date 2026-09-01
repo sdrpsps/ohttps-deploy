@@ -28,7 +28,28 @@ let runtimeSettings: RuntimeSettings = { ...runtimeDefaults, ohttpsApiId: "", oh
 
 let stopping = false;
 let stopHeartbeat: (() => void) | undefined;
-const stop = (signal: string) => { stopping = true; stopHeartbeat?.(); logger.info("worker stopping", { signal }); };
+let wakeWorker: (() => void) | undefined;
+
+function sleep(ms: number): Promise<void> {
+  if (stopping) return Promise.resolve();
+  return new Promise((resolve) => {
+    let timer: NodeJS.Timeout | undefined;
+    const onWake = () => {
+      if (timer) clearTimeout(timer);
+      wakeWorker = undefined;
+      resolve();
+    };
+    wakeWorker = onWake;
+    timer = setTimeout(onWake, ms);
+  });
+}
+
+const stop = (signal: string) => {
+  stopping = true;
+  stopHeartbeat?.();
+  wakeWorker?.();
+  logger.info("worker stopping", { signal });
+};
 process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
 
@@ -278,7 +299,8 @@ async function run() {
   try {
     while (!stopping) {
       await pollQueue();
-      await new Promise((resolve) => setTimeout(resolve, 15_000));
+      if (stopping) break;
+      await sleep(15_000);
     }
   } finally { stopHeartbeat?.(); stopHeartbeat = undefined; }
 }
