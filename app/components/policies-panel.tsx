@@ -2,168 +2,98 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Power, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Certificate, ManagedServer } from "@/components/console/types";
 import { getApiData, queryKeys } from "@/lib/api";
 
-type Policy = {
-  certificateId: string;
-  certificateName: string;
-  domain: string;
-  serverId: string;
-  serverName: string;
-  host: string;
-  autoDeploy: boolean;
-};
+type Policy = { certificateId: string; serverId: string; autoDeploy: boolean };
+type PolicyData = { policies: Policy[]; configuredCertificateIds: string[] };
+const emptyPolicyData: PolicyData = { policies: [], configuredCertificateIds: [] };
 
-type PoliciesPanelProps = {
-  certificates: Certificate[];
-  servers: ManagedServer[];
-};
+type PoliciesPanelProps = { certificates: Certificate[]; servers: ManagedServer[] };
 
 export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
   const queryClient = useQueryClient();
-  const { data: policies = [] } = useQuery({ queryKey: queryKeys.policies, queryFn: () => getApiData<Policy[]>("/api/deployment-policies") });
+  const { data = emptyPolicyData, isLoading } = useQuery({ queryKey: queryKeys.policies, queryFn: () => getApiData<PolicyData>("/api/deployment-policies") });
   const [selectedCertificate, setSelectedCertificate] = useState<Certificate | null>(null);
+  const [selectedServerIds, setSelectedServerIds] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const enabledServers = useMemo(() => servers.filter((server) => server.enabled), [servers]);
 
-  async function save(certificateId: string, serverId: string, autoDeploy = true) {
-    const response = await fetch("/api/deployment-policies", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ certificateId, serverId, autoDeploy }),
+  function currentSelection(certificateId: string) {
+    const existing = data.policies.filter((policy) => policy.certificateId === certificateId);
+    if (!existing.length && !data.configuredCertificateIds.includes(certificateId)) return new Set(enabledServers.map((server) => server.id));
+    return new Set(existing.filter((policy) => policy.autoDeploy && enabledServers.some((server) => server.id === policy.serverId)).map((policy) => policy.serverId));
+  }
+
+  function openEditor(certificate: Certificate) {
+    setSelectedCertificate(certificate);
+    setSelectedServerIds(currentSelection(certificate.id));
+  }
+
+  function toggleServer(serverId: string, checked: boolean) {
+    setSelectedServerIds((ids) => {
+      const next = new Set(ids);
+      if (checked) next.add(serverId); else next.delete(serverId);
+      return next;
     });
-    if (!response.ok) {
-      toast.error("保存部署策略失败");
-      return;
-    }
-    setSelectedCertificate(null);
-    toast.success("部署策略已保存");
-    await queryClient.invalidateQueries({ queryKey: queryKeys.policies });
   }
 
-  async function remove(policy: Policy) {
-    const query = new URLSearchParams({ certificateId: policy.certificateId, serverId: policy.serverId });
-    const response = await fetch(`/api/deployment-policies?${query}`, { method: "DELETE" });
-    if (!response.ok) {
-      toast.error("删除部署策略失败");
-      return;
-    }
-    toast.success("部署策略已删除");
-    await queryClient.invalidateQueries({ queryKey: queryKeys.policies });
+  async function save() {
+    if (!selectedCertificate) return;
+    setSaving(true);
+    try {
+      const response = await fetch("/api/deployment-policies", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ certificateId: selectedCertificate.id, serverIds: [...selectedServerIds] }) });
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.error?.message ?? "保存部署策略失败");
+      await queryClient.invalidateQueries({ queryKey: queryKeys.policies });
+      setSelectedCertificate(null);
+      toast.success("部署服务器已保存");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "保存部署策略失败"); }
+    finally { setSaving(false); }
   }
 
-  const assignedServerIds = useMemo(() => new Set(
-    policies
-      .filter((policy) => policy.certificateId === selectedCertificate?.id)
-      .map((policy) => policy.serverId),
-  ), [policies, selectedCertificate]);
-  const availableServers = servers.filter((server) => server.enabled && !assignedServerIds.has(server.id));
+  return <Card>
+    <CardHeader className="flex-row items-start justify-between gap-4">
+      <div><CardTitle>部署策略</CardTitle><CardDescription>分别为每张证书选择部署服务器；首次配置默认选择所有已启用服务器。</CardDescription></div>
+      <Badge variant="secondary">{data.policies.length} 个映射</Badge>
+    </CardHeader>
+    <CardContent>
+      <Table>
+        <TableHeader><TableRow><TableHead>证书</TableHead><TableHead>部署服务器</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+        <TableBody>
+          {certificates.map((certificate) => {
+            const count = currentSelection(certificate.id).size;
+            return <TableRow key={certificate.id}>
+              <TableCell className="font-medium">{certificate.name}<p className="mt-1 text-xs font-normal text-muted-foreground">{certificate.domain}</p></TableCell>
+              <TableCell><Badge variant={count ? "secondary" : "outline"}>{count} / {enabledServers.length} 台已启用服务器</Badge></TableCell>
+              <TableCell className="text-right"><Button variant="outline" size="sm" disabled={isLoading} onClick={() => openEditor(certificate)}>配置服务器</Button></TableCell>
+            </TableRow>;
+          })}
+          {!certificates.length && <TableRow><TableCell colSpan={3} className="h-20 text-center text-muted-foreground">请先添加证书。</TableCell></TableRow>}
+        </TableBody>
+      </Table>
+    </CardContent>
 
-  return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between gap-4">
-        <div>
-          <CardTitle>部署策略</CardTitle>
-          <CardDescription>将证书映射到服务器；启用自动部署的目标会在刷新后加入任务。</CardDescription>
+    <Dialog open={Boolean(selectedCertificate)} onOpenChange={(open) => !open && setSelectedCertificate(null)}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>选择部署服务器</DialogTitle><DialogDescription>为 {selectedCertificate?.name} 勾选部署目标。首次配置已默认全选。</DialogDescription></DialogHeader>
+        <div className="space-y-3">
+          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" onClick={() => setSelectedServerIds(new Set())}>取消全选</Button><Button type="button" variant="outline" size="sm" onClick={() => setSelectedServerIds(new Set(enabledServers.map((server) => server.id)))}>全选</Button></div>
+          {enabledServers.map((server) => {
+            const id = `policy-${selectedCertificate?.id}-${server.id}`;
+            return <div key={server.id} className="flex items-center gap-3 rounded-lg border p-3"><Checkbox id={id} checked={selectedServerIds.has(server.id)} onCheckedChange={(checked) => toggleServer(server.id, checked === true)} /><Label htmlFor={id} className="flex-1 cursor-pointer"><span className="font-medium">{server.name}</span><span className="ml-2 font-mono text-xs text-muted-foreground">{server.host}:{server.port}</span></Label></div>;
+          })}
+          {!enabledServers.length && <p className="py-4 text-center text-sm text-muted-foreground">没有已启用的服务器可供选择。</p>}
+          <Button className="w-full" disabled={saving} onClick={() => void save()}>{saving ? "保存中..." : "保存选择"}</Button>
         </div>
-        <Badge variant="secondary">{policies.length} 个映射</Badge>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>证书</TableHead>
-              <TableHead>服务器</TableHead>
-              <TableHead>自动部署</TableHead>
-              <TableHead className="text-right">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {policies.map((policy) => (
-              <TableRow key={`${policy.certificateId}-${policy.serverId}`}>
-                <TableCell className="font-medium">
-                  {policy.certificateName}
-                  <p className="mt-1 text-xs font-normal text-muted-foreground">{policy.domain}</p>
-                </TableCell>
-                <TableCell>
-                  {policy.serverName}
-                  <p className="mt-1 text-xs text-muted-foreground">{policy.host}</p>
-                </TableCell>
-                <TableCell>
-                  <Button variant="outline" size="sm" onClick={() => void save(policy.certificateId, policy.serverId, !policy.autoDeploy)}>
-                    <Power /> {policy.autoDeploy ? "已启用" : "已停用"}
-                  </Button>
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button variant="ghost" size="icon" onClick={() => void remove(policy)} aria-label="删除部署策略">
-                    <Trash2 className="size-4" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-            {policies.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">还没有策略映射</TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-        <div className="flex flex-wrap gap-2">
-          {certificates.map((certificate) => (
-            <Button key={certificate.id} variant="outline" size="sm" onClick={() => setSelectedCertificate(certificate)}>
-              <Plus /> 为“{certificate.name}”添加服务器
-            </Button>
-          ))}
-        </div>
-      </CardContent>
-
-      <Dialog open={Boolean(selectedCertificate)} onOpenChange={(open) => !open && setSelectedCertificate(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>添加部署目标</DialogTitle>
-            <DialogDescription>为 {selectedCertificate?.name} 选择一个已启用服务器。</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            {availableServers.map((server) => (
-              <Button
-                key={server.id}
-                className="w-full justify-between"
-                variant="outline"
-                onClick={() => selectedCertificate && void save(selectedCertificate.id, server.id)}
-              >
-                <span>{server.name}</span>
-                <span className="font-mono text-xs text-muted-foreground">{server.host}</span>
-              </Button>
-            ))}
-            {availableServers.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">没有可添加的已启用服务器。</p>}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </Card>
-  );
+      </DialogContent>
+    </Dialog>
+  </Card>;
 }

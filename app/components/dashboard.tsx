@@ -40,6 +40,7 @@ type SyncJob = {
   errorSummary: string | null;
   createdAt: string;
 };
+type PoliciesData = { policies: Array<{ certificateId: string }>; configuredCertificateIds: string[] };
 
 const navigation: NavigationItem[] = [
   { value: "overview", label: "总览", description: "证书与部署状态概览", href: "/", icon: LayoutDashboard },
@@ -67,7 +68,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     { queryKey: queryKeys.certificates, queryFn: () => getApiData<Certificate[]>("/api/certificates"), enabled: ["overview", "certificates", "policies", "activity"].includes(section) },
     { queryKey: queryKeys.servers, queryFn: () => getApiData<ManagedServer[]>("/api/servers"), enabled: ["overview", "servers", "policies", "activity"].includes(section) },
     { queryKey: queryKeys.settings, queryFn: () => getApiData<SettingsSummary>("/api/settings") },
-    { queryKey: queryKeys.policies, queryFn: () => getApiData<Array<{ certificateId: string }>>("/api/deployment-policies"), enabled: ["overview", "certificates", "policies"].includes(section) },
+    { queryKey: queryKeys.policies, queryFn: () => getApiData<PoliciesData>("/api/deployment-policies"), enabled: ["overview", "certificates", "policies"].includes(section) },
     { queryKey: queryKeys.health, queryFn: () => getApiData<{ worker: boolean }>("/api/health") },
     { queryKey: queryKeys.deployments, queryFn: () => getApiData<Array<{ status: string }>>("/api/deployments"), enabled: ["overview", "activity"].includes(section) },
     { queryKey: queryKeys.syncJobs, queryFn: () => getApiData<SyncJob[]>("/api/certificate-sync-jobs"), enabled: ["overview", "certificates"].includes(section) },
@@ -75,7 +76,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const certificates = certificatesQuery.data ?? [];
   const servers = serversQuery.data ?? [];
   const settings = settingsQuery.data ?? null;
-  const policyCount = policiesQuery.data?.length ?? 0;
+  const policyCount = policiesQuery.data?.policies.length ?? 0;
   const workerOnline = Boolean(healthQuery.data?.worker);
   const failedDeployments = deploymentsQuery.data?.filter((item) => item.status === "failed").length ?? 0;
   const syncJobs = syncJobsQuery.data ?? [];
