@@ -97,13 +97,7 @@ export function LoginForm({
               <Button type="submit" className="w-full" disabled={isSubmitting}>
                 {isSubmitting ? "登录中…" : "登录"}
               </Button>
-              <Button type="button" variant="outline" className="w-full" disabled>
-                使用 Google 登录
-              </Button>
             </div>
-            <p className="mt-4 text-center text-sm text-muted-foreground">
-              当前为单管理员模式
-            </p>
           </form>
         </CardContent>
       </Card>
