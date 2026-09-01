@@ -1,8 +1,10 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
+import { Fingerprint, LoaderCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Control, useForm } from "react-hook-form";
+import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,6 +50,7 @@ export function ServerFormDialog({
   onOpenChange,
   onSave,
 }: ServerFormDialogProps) {
+  const [fetchingFingerprint, setFetchingFingerprint] = useState(false);
   const form = useForm<ServerForm>({
     resolver: zodResolver(serverSchema),
     defaultValues: emptyServerForm,
@@ -59,6 +62,24 @@ export function ServerFormDialog({
 
   async function submit(values: ServerForm) {
     if (await onSave(values, server)) onOpenChange(false);
+  }
+
+  async function fetchFingerprint() {
+    if (!await form.trigger(["host", "port"])) return;
+    setFetchingFingerprint(true);
+    try {
+      const response = await fetch("/api/servers/fingerprint", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ host: form.getValues("host"), port: form.getValues("port") }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error?.message ?? "无法获取主机指纹");
+      form.setValue("hostFingerprint", body.data.fingerprint, { shouldDirty: true, shouldValidate: true });
+      toast.success("已获取主机指纹，请保存服务器配置");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "无法获取主机指纹");
+    } finally { setFetchingFingerprint(false); }
   }
 
   return (
@@ -90,7 +111,25 @@ export function ServerFormDialog({
               />
               <TextField control={form.control} name="username" label="用户名" placeholder="cert" />
             </div>
-            <TextField control={form.control} name="hostFingerprint" label="主机指纹" placeholder="SHA256:..." />
+            <FormField
+              control={form.control}
+              name="hostFingerprint"
+              render={({ field }) => (
+                <FormItem>
+                  <div className="flex items-center justify-between gap-3">
+                    <FormLabel>主机指纹</FormLabel>
+                    <Button type="button" variant="outline" size="sm" disabled={busy || fetchingFingerprint} onClick={() => void fetchFingerprint()}>
+                      {fetchingFingerprint ? <LoaderCircle className="animate-spin" /> : <Fingerprint />}
+                      {fetchingFingerprint ? "获取中..." : server ? "重新获取" : "获取指纹"}
+                    </Button>
+                  </div>
+                  <FormControl>
+                    <Input placeholder="填写主机和端口后获取" readOnly {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <Button className="w-full" disabled={busy}>
               {busy ? "保存中..." : server ? "保存修改" : "保存服务器"}
             </Button>

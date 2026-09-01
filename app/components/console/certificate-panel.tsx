@@ -1,6 +1,6 @@
 "use client";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +24,7 @@ import type { Certificate, DeleteTarget } from "./types";
 
 type CertificatePanelProps = {
   certificates: Certificate[];
+  jobs: Array<{ id: string; certificateId: string; certificateName: string; trigger: string; status: string; errorSummary: string | null; createdAt: string }>;
   loading: boolean;
   busy: boolean;
   onCreate: () => void;
@@ -38,6 +39,7 @@ type CertificatePanelProps = {
 
 export function CertificatePanel({
   certificates,
+  jobs,
   loading,
   busy,
   onCreate,
@@ -49,9 +51,7 @@ export function CertificatePanel({
   onNavigate,
   onConfigureSettings,
 }: CertificatePanelProps) {
-  const [jobs, setJobs] = useState<Array<{ id: string; certificateId: string; certificateName: string; trigger: string; status: string; errorSummary: string | null; createdAt: string }>>([]);
   const [confirming, setConfirming] = useState<Certificate | null>(null);
-  useEffect(() => { fetch("/api/certificate-sync-jobs", { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((body) => { if (body?.data) setJobs(body.data); }).catch(() => undefined); }, [certificates]);
   return (
     <div className="space-y-6"><Card>
       <CardHeader className="flex-row items-start justify-between gap-4">

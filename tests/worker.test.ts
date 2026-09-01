@@ -25,6 +25,13 @@ async function run() {
   assert.equal(normalizeFingerprint("SHA256:MsB48clb9+ArTrw8In3WYXa2nA6NrouWVH7TC4dTxFU"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
   assert.equal(normalizeFingerprint("32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
   assert.equal(normalizeFingerprint(""), "");
+  const fakeClient = {
+    once(_event: string, _listener: unknown) { return this; },
+    connect(config: { hostVerifier?: (hash: string) => boolean }) { config.hostVerifier?.("server-key-hash"); },
+    end() {},
+  };
+  const fingerprint = await new SSHDeployer({ privateKey: "", clientFactory: () => fakeClient as never }).getHostFingerprint({ host: "server.example.com", port: 22, timeoutSeconds: 1 });
+  assert.equal(fingerprint, "SHA256:server-key-hash");
   console.log("worker tests passed");
 }
 

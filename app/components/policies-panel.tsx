@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Power, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { Certificate, ManagedServer } from "@/components/console/types";
+import { getApiData, queryKeys } from "@/lib/api";
 
 type Policy = {
   certificateId: string;
@@ -45,14 +47,9 @@ type PoliciesPanelProps = {
 };
 
 export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
-  const [policies, setPolicies] = useState<Policy[]>([]);
+  const queryClient = useQueryClient();
+  const { data: policies = [] } = useQuery({ queryKey: queryKeys.policies, queryFn: () => getApiData<Policy[]>("/api/deployment-policies") });
   const [selectedCertificate, setSelectedCertificate] = useState<Certificate | null>(null);
-
-  async function load() {
-    const response = await fetch("/api/deployment-policies", { cache: "no-store" });
-    if (!response.ok) throw new Error("无法加载部署策略");
-    setPolicies((await response.json()).data);
-  }
 
   async function save(certificateId: string, serverId: string, autoDeploy = true) {
     const response = await fetch("/api/deployment-policies", {
@@ -66,7 +63,7 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
     }
     setSelectedCertificate(null);
     toast.success("部署策略已保存");
-    await load().catch((cause) => toast.error(cause.message));
+    await queryClient.invalidateQueries({ queryKey: queryKeys.policies });
   }
 
   async function remove(policy: Policy) {
@@ -77,12 +74,8 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
       return;
     }
     toast.success("部署策略已删除");
-    await load().catch((cause) => toast.error(cause.message));
+    await queryClient.invalidateQueries({ queryKey: queryKeys.policies });
   }
-
-  useEffect(() => {
-    load().catch((cause) => toast.error(cause.message));
-  }, []);
 
   const assignedServerIds = useMemo(() => new Set(
     policies

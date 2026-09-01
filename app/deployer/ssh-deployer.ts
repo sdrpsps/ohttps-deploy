@@ -9,6 +9,39 @@ type SshFactory = () => Client;
 export class SSHDeployer implements Deployer {
   constructor(private readonly options: { privateKey: string | Buffer; knownHosts?: Record<string, string>; clientFactory?: SshFactory } ) {}
 
+  async getHostFingerprint(target: Pick<DeployTarget, "host" | "port" | "timeoutSeconds">): Promise<string> {
+    const { Client: SshClient } = await import("ssh2");
+    const client = this.options.clientFactory?.() ?? new SshClient();
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        let finished = false;
+        let timeout: ReturnType<typeof setTimeout>;
+        const finish = (callback: () => void) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timeout);
+          callback();
+        };
+        timeout = setTimeout(() => finish(() => reject(new Error("SSH host-key lookup timed out"))), target.timeoutSeconds * 1000);
+        client.once("error", (error) => finish(() => reject(error)));
+        try {
+          client.connect({
+            host: target.host,
+            port: target.port,
+            readyTimeout: target.timeoutSeconds * 1000,
+            hostHash: "sha256",
+            hostVerifier: (hash: string) => {
+              finish(() => resolve(`SHA256:${hash}`));
+              return false;
+            },
+          });
+        } catch (error) {
+          finish(() => reject(error as Error));
+        }
+      });
+    } finally { client.end(); }
+  }
+
   async testConnection(target: DeployTarget): Promise<DeploymentResult> {
     const { Client: SshClient } = await import("ssh2");
     const client = this.options.clientFactory?.() ?? new SshClient();

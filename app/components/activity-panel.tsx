@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ActivityTables } from "@/components/activity/activity-tables";
 import { StatusBadge } from "@/components/activity/deployment-history";
@@ -9,20 +10,20 @@ import { DeploymentHistory } from "@/components/activity/deployment-history";
 import type { AuditEntry, Deployment, DeploymentDetail, LogEntry } from "@/components/activity/types";
 import { terminalStatuses } from "@/components/activity/types";
 import type { Certificate, ManagedServer } from "@/components/console/types";
+import { getApiData, queryKeys } from "@/lib/api";
 
 type ActivityPanelProps = {
   certificates: Certificate[];
   servers: ManagedServer[];
 };
 
+type SyncTask = { id: string; certificateName: string; status: string; trigger: string; errorSummary: string | null };
+
 export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
+  const queryClient = useQueryClient();
   const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
-  const [syncTask, setSyncTask] = useState<{ id: string; certificateName: string; status: string; trigger: string; errorSummary: string | null } | null>(null);
   useEffect(() => { setSyncTaskId(new URLSearchParams(window.location.search).get("taskId")); }, []);
-  const [deployments, setDeployments] = useState<Deployment[]>([]);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [auditEvents, setAuditEvents] = useState<AuditEntry[]>([]);
-  const [selected, setSelected] = useState<DeploymentDetail | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [certificateId, setCertificateId] = useState("");
   const [serverId, setServerId] = useState("");
   const [from, setFrom] = useState("");
@@ -32,28 +33,30 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
     from: from && new Date(`${from}T00:00:00+08:00`).toISOString(),
   }).filter(([, value]) => value)).toString(), [certificateId, serverId, from]);
 
-  async function load() {
-    const [deploymentResponse, logResponse, auditResponse] = await Promise.all([
-      fetch("/api/deployments", { cache: "no-store" }),
-      fetch(`/api/logs?${query}`, { cache: "no-store" }),
-      fetch("/api/audit-events", { cache: "no-store" }),
-    ]);
-    if (!deploymentResponse.ok || !logResponse.ok || !auditResponse.ok) {
-      throw new Error("无法加载任务历史");
-    }
-    setDeployments((await deploymentResponse.json()).data);
-    setLogs((await logResponse.json()).data);
-    setAuditEvents((await auditResponse.json()).data);
-  }
+  const deploymentsQuery = useQuery({ queryKey: queryKeys.deployments, queryFn: () => getApiData<Deployment[]>("/api/deployments") });
+  const logsQuery = useQuery({ queryKey: queryKeys.logs(query), queryFn: () => getApiData<LogEntry[]>(`/api/logs?${query}`) });
+  const auditEventsQuery = useQuery({ queryKey: queryKeys.auditEvents, queryFn: () => getApiData<AuditEntry[]>("/api/audit-events") });
+  const syncTaskQuery = useQuery({
+    queryKey: queryKeys.syncJob(syncTaskId ?? ""),
+    queryFn: () => getApiData<SyncTask>(`/api/certificate-sync-jobs/${syncTaskId}`),
+    enabled: Boolean(syncTaskId),
+    refetchInterval: (current) => ["queued", "running"].includes((current.state.data as SyncTask | undefined)?.status ?? "") ? 5_000 : false,
+  });
+  const selectedQuery = useQuery({
+    queryKey: queryKeys.deployment(selectedId ?? ""),
+    queryFn: () => getApiData<DeploymentDetail>(`/api/deployments/${selectedId}`),
+    enabled: Boolean(selectedId),
+  });
+  const deployments = deploymentsQuery.data ?? [];
+  const logs = logsQuery.data ?? [];
+  const auditEvents = auditEventsQuery.data ?? [];
+  const syncTask = syncTaskQuery.data ?? null;
+  const selected = selectedQuery.data ?? null;
+  const historyError = [deploymentsQuery, logsQuery, auditEventsQuery].find((result) => result.error)?.error;
 
-  async function open(id: string) {
-    const response = await fetch(`/api/deployments/${id}`, { cache: "no-store" });
-    if (!response.ok) {
-      toast.error("无法加载任务详情");
-      return;
-    }
-    setSelected((await response.json()).data);
-  }
+  useEffect(() => {
+    if (historyError instanceof Error) toast.error(historyError.message);
+  }, [historyError]);
 
   async function action(id: string, name: "retry" | "cancel") {
     const response = await fetch(`/api/deployments/${id}/${name}`, { method: "POST" });
@@ -62,35 +65,26 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
       return;
     }
     toast.success(name === "retry" ? "重试任务已创建" : "任务已取消");
-    await load().catch((cause) => toast.error(cause.message));
-    if (name === "cancel") await open(id);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.deployments }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.logs(query) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.auditEvents }),
+    ]);
+    if (name === "cancel") await queryClient.invalidateQueries({ queryKey: queryKeys.deployment(id) });
   }
-
-  useEffect(() => {
-    load().catch((cause) => toast.error(cause.message));
-  }, [query]);
-
-  useEffect(() => {
-    if (!syncTaskId) { setSyncTask(null); return; }
-    let active = true;
-    const loadSyncTask = () => fetch(`/api/certificate-sync-jobs/${syncTaskId}`, { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((body) => { if (active) setSyncTask(body?.data ?? null); }).catch(() => { if (active) setSyncTask(null); });
-    void loadSyncTask();
-    const timer = window.setInterval(() => { if (syncTask?.status === "queued" || syncTask?.status === "running") void loadSyncTask(); }, 2000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [syncTaskId, syncTask?.status]);
 
   useEffect(() => {
     if (!selected || terminalStatuses.has(selected.status)) return;
     const source = new EventSource(`/api/deployments/${selected.id}/events`);
     source.onmessage = (event) => {
       const entry = JSON.parse(event.data) as LogEntry;
-      setSelected((current) => current?.id === selected.id
+      queryClient.setQueryData<DeploymentDetail>(queryKeys.deployment(selected.id), (current) => current?.id === selected.id
         ? { ...current, logs: [...current.logs, entry] }
         : current);
     };
     source.addEventListener("end", () => {
       source.close();
-      void open(selected.id);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.deployment(selected.id) });
     });
     return () => source.close();
   }, [selected?.id, selected?.status]);
@@ -108,10 +102,10 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
         onCertificateChange={setCertificateId}
         onServerChange={setServerId}
         onFromChange={setFrom}
-        onOpen={(id) => void open(id)}
+        onOpen={setSelectedId}
         onAction={(id, name) => void action(id, name)}
       />
-      {selected && <DeploymentDetailPanel deployment={selected} onClose={() => setSelected(null)} />}
+      {selected && <DeploymentDetailPanel deployment={selected} onClose={() => setSelectedId(null)} />}
       <ActivityTables logs={logs} auditEvents={auditEvents} />
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { Command, Menu, RefreshCw, Settings2 } from "lucide-react";
+import { Command, Menu, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -13,14 +13,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
 import type { DashboardSection, NavigationItem } from "./types";
 
 type ConsoleLayoutProps = {
   section: DashboardSection;
   navigation: NavigationItem[];
-  loading: boolean;
-  onReload: () => void;
   onSettings: () => void;
   workerOnline: boolean;
   children: React.ReactNode;
@@ -29,8 +26,6 @@ type ConsoleLayoutProps = {
 export function ConsoleLayout({
   section,
   navigation,
-  loading,
-  onReload,
   onSettings,
   workerOnline,
   children,
@@ -107,10 +102,6 @@ export function ConsoleLayout({
               <p className="text-xs text-muted-foreground">{selected.description}</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" disabled={loading} onClick={onReload}>
-            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-            同步状态
-          </Button>
         </header>
         <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-8">
           <TabsContent value={section} className="mt-0">

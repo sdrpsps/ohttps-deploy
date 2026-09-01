@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Activity, Bell, LayoutDashboard, Server, Settings2, ShieldCheck, KeyRound, Workflow } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -18,6 +19,7 @@ import { SettingsDialog, type SettingsSummary } from "@/components/console/setti
 import { SshKeyDialog } from "@/components/console/ssh-key-dialog";
 import { OnboardingWizard } from "@/components/console/onboarding-wizard";
 import { daysUntil } from "@/lib/utils";
+import { getApiData, queryKeys } from "@/lib/api";
 import type {
   Certificate,
   DashboardSection,
@@ -27,6 +29,16 @@ import type {
 } from "@/components/console/types";
 
 export type { DashboardSection } from "@/components/console/types";
+
+type SyncJob = {
+  id: string;
+  certificateId: string;
+  certificateName: string;
+  trigger: string;
+  status: string;
+  errorSummary: string | null;
+  createdAt: string;
+};
 
 const navigation: NavigationItem[] = [
   { value: "overview", label: "总览", description: "证书与部署状态概览", href: "/", icon: LayoutDashboard },
@@ -39,14 +51,7 @@ const navigation: NavigationItem[] = [
 
 export default function Dashboard({ section = "overview" }: { section?: DashboardSection }) {
   const router = useRouter();
-  const [certificates, setCertificates] = useState<Certificate[]>([]);
-  const [servers, setServers] = useState<ManagedServer[]>([]);
-  const [settings, setSettings] = useState<SettingsSummary | null>(null);
-  const [policyCount, setPolicyCount] = useState(0);
-  const [workerOnline, setWorkerOnline] = useState(false);
-  const [failedDeployments, setFailedDeployments] = useState(0);
-  const [failedSyncJobs, setFailedSyncJobs] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [certificateDialogOpen, setCertificateDialogOpen] = useState(false);
   const [serverDialogOpen, setServerDialogOpen] = useState(false);
@@ -56,36 +61,33 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const [editingServer, setEditingServer] = useState<ManagedServer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
-  async function load() {
-    setLoading(true);
-    try {
-      const [certificateResponse, serverResponse, settingsResponse, policyResponse, healthResponse, deploymentResponse, syncResponse] = await Promise.all([
-        fetch("/api/certificates", { cache: "no-store" }),
-        fetch("/api/servers", { cache: "no-store" }),
-        fetch("/api/settings", { cache: "no-store" }),
-        fetch("/api/deployment-policies", { cache: "no-store" }),
-        fetch("/api/health", { cache: "no-store" }),
-        fetch("/api/deployments", { cache: "no-store" }),
-        fetch("/api/certificate-sync-jobs", { cache: "no-store" }),
-      ]);
-      if (!certificateResponse.ok || !serverResponse.ok || !settingsResponse.ok || !policyResponse.ok || !healthResponse.ok || !deploymentResponse.ok || !syncResponse.ok) {
-        throw new Error("无法加载控制台数据");
-      }
-      setCertificates((await certificateResponse.json()).data);
-      setServers((await serverResponse.json()).data);
-      setSettings((await settingsResponse.json()).data);
-      setPolicyCount(((await policyResponse.json()).data ?? []).length);
-      setWorkerOnline(Boolean((await healthResponse.json()).worker));
-      setFailedDeployments(((await deploymentResponse.json()).data ?? []).filter((item: { status: string }) => item.status === "failed").length);
-      setFailedSyncJobs(((await syncResponse.json()).data ?? []).filter((item: { status: string }) => item.status === "failed").length);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery] = useQueries({ queries: [
+    { queryKey: queryKeys.certificates, queryFn: () => getApiData<Certificate[]>("/api/certificates"), enabled: ["overview", "certificates", "policies", "activity"].includes(section) },
+    { queryKey: queryKeys.servers, queryFn: () => getApiData<ManagedServer[]>("/api/servers"), enabled: ["overview", "servers", "policies", "activity"].includes(section) },
+    { queryKey: queryKeys.settings, queryFn: () => getApiData<SettingsSummary>("/api/settings") },
+    { queryKey: queryKeys.policies, queryFn: () => getApiData<Array<{ certificateId: string }>>("/api/deployment-policies"), enabled: ["overview", "certificates", "policies"].includes(section) },
+    { queryKey: queryKeys.health, queryFn: () => getApiData<{ worker: boolean }>("/api/health") },
+    { queryKey: queryKeys.deployments, queryFn: () => getApiData<Array<{ status: string }>>("/api/deployments"), enabled: ["overview", "activity"].includes(section) },
+    { queryKey: queryKeys.syncJobs, queryFn: () => getApiData<SyncJob[]>("/api/certificate-sync-jobs"), enabled: ["overview", "certificates"].includes(section) },
+  ] });
+  const certificates = certificatesQuery.data ?? [];
+  const servers = serversQuery.data ?? [];
+  const settings = settingsQuery.data ?? null;
+  const policyCount = policiesQuery.data?.length ?? 0;
+  const workerOnline = Boolean(healthQuery.data?.worker);
+  const failedDeployments = deploymentsQuery.data?.filter((item) => item.status === "failed").length ?? 0;
+  const syncJobs = syncJobsQuery.data ?? [];
+  const failedSyncJobs = syncJobs.filter((item) => item.status === "failed").length;
+  const loading = [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery].some((query) => query.isLoading);
+  const loadError = [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery].find((query) => query.error)?.error;
 
   useEffect(() => {
-    load().catch((cause) => toast.error(cause.message));
-  }, []);
+    if (loadError instanceof Error) toast.error(loadError.message);
+  }, [loadError]);
+
+  async function reload() {
+    await queryClient.invalidateQueries();
+  }
 
   async function save(endpoint: string, data: Record<string, unknown>, message: string, method = "POST") {
     setBusy(true);
@@ -100,7 +102,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         return false;
       }
       toast.success(message);
-      await load();
+      await reload();
       return true;
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "保存失败");
@@ -120,7 +122,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         return false;
       }
       toast.success(successMessage);
-      if (method === "DELETE") await load();
+      if (method === "DELETE") await reload();
       return true;
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "操作未完成");
@@ -191,6 +193,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     certificates: (
       <CertificatePanel
         certificates={certificates}
+        jobs={syncJobs}
         loading={loading}
         busy={busy}
         onCreate={() => openCertificateDialog()}
@@ -224,9 +227,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
       <ConsoleLayout
         section={section}
         navigation={navigation}
-        loading={loading}
         workerOnline={workerOnline}
-        onReload={() => load().catch((cause) => toast.error(cause.message))}
         onSettings={() => setSettingsDialogOpen(true)}
       >
         <div className="space-y-8">
