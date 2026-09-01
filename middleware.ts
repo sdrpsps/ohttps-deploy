@@ -6,6 +6,15 @@ const requests = new Map<string, { count: number; resetAt: number }>();
 
 export const runtime = "nodejs";
 
+function trustedOrigin(request: NextRequest) {
+  try {
+    // The public URL remains stable when a TLS proxy forwards requests to this container.
+    return new URL(process.env.BETTER_AUTH_URL ?? request.nextUrl.origin).origin;
+  } catch {
+    return request.nextUrl.origin;
+  }
+}
+
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
@@ -33,7 +42,7 @@ export async function middleware(request: NextRequest) {
   const isMutation = ["POST", "PUT", "PATCH", "DELETE"].includes(request.method);
   if (isMutation) {
     const origin = request.headers.get("origin");
-    if (origin && origin !== request.nextUrl.origin) {
+    if (origin && origin !== trustedOrigin(request)) {
       return NextResponse.json(
         { error: { code: "CSRF_REJECTED", message: "跨站请求已拒绝" } },
         { status: 403 },

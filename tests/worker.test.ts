@@ -27,7 +27,10 @@ async function run() {
   assert.equal(normalizeFingerprint(""), "");
   const fakeClient = {
     once(_event: string, _listener: unknown) { return this; },
-    connect(config: { hostVerifier?: (hash: string) => boolean }) { config.hostVerifier?.("server-key-hash"); },
+    connect(config: { username?: string; hostVerifier?: (hash: string) => boolean }) {
+      assert.equal(config.username, "fingerprint");
+      config.hostVerifier?.("server-key-hash");
+    },
     end() {},
   };
   const fingerprint = await new SSHDeployer({ privateKey: "", clientFactory: () => fakeClient as never }).getHostFingerprint({ host: "server.example.com", port: 22, timeoutSeconds: 1 });

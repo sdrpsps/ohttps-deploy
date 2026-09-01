@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { SSHDeployer } from "@/deployer";
+import { fingerprintErrorMessage, SSHDeployer } from "@/deployer";
 
 export const runtime = "nodejs";
 
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   try {
     const fingerprint = await new SSHDeployer({ privateKey: "" }).getHostFingerprint({ ...parsed.data, timeoutSeconds: 10 });
     return NextResponse.json({ data: { fingerprint } });
-  } catch {
-    return NextResponse.json({ error: { code: "FINGERPRINT_UNAVAILABLE", message: "unable to read SSH host fingerprint" } }, { status: 422 });
+  } catch (error) {
+    return NextResponse.json({ error: { code: "FINGERPRINT_UNAVAILABLE", message: fingerprintErrorMessage(error) } }, { status: 422 });
   }
 }

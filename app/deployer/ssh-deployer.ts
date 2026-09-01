@@ -28,6 +28,8 @@ export class SSHDeployer implements Deployer {
           client.connect({
             host: target.host,
             port: target.port,
+            // ssh2 validates this before the host-key exchange; authentication never begins here.
+            username: "fingerprint",
             readyTimeout: target.timeoutSeconds * 1000,
             hostHash: "sha256",
             hostVerifier: (hash: string) => {
@@ -155,6 +157,14 @@ export function normalizeFingerprint(fp?: string | null): string {
     if (buf.length === 32) return buf.toString("hex").toLowerCase();
   } catch {}
   return clean.toLowerCase();
+}
+
+export function fingerprintErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (/timed out/i.test(message)) return "SSH handshake timed out; check host, port, firewall, and SSH service";
+  if (/ECONNREFUSED/i.test(message)) return "SSH port refused the connection; check the port and SSH service";
+  if (/ENOTFOUND|EAI_AGAIN/i.test(message)) return "SSH hostname could not be resolved from the container";
+  return "SSH handshake failed; check host, port, and network access from the container";
 }
 
 function sanitizeError(message: string) { return message.replace(/(pass(word)?|private.?key|authorization|token)\s*[:=]\s*[^\s]+/gi, "$1=[REDACTED]").slice(0, 500); }
