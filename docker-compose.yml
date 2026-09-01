@@ -1,12 +1,15 @@
+x-app-image: &app-image ghcr.io/sdrpsps/ohttps-deploy:${IMAGE_TAG:-latest}
+
 services:
   web:
+    image: *app-image
     build: .
     command: node server.js
     env_file: .env
+    environment:
+      SKIP_DB_MIGRATION: "1"
     volumes:
-      - ssl_data:/app/data
-      - ssl_certs:/app/certs
-      - ssl_logs:/app/logs
+      - ${OHTTPS_DATA_DIR:-./data}:/app/data
     ports:
       - "3000:3000"
     healthcheck:
@@ -17,14 +20,8 @@ services:
     depends_on:
       - worker
   worker:
-    build: .
+    image: *app-image
     command: node --import tsx app/worker.ts
     env_file: .env
     volumes:
-      - ssl_data:/app/data
-      - ssl_certs:/app/certs
-      - ssl_logs:/app/logs
-volumes:
-  ssl_data:
-  ssl_certs:
-  ssl_logs:
+      - ${OHTTPS_DATA_DIR:-./data}:/app/data

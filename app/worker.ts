@@ -13,7 +13,6 @@ import { postWebhook, type WebhookEvent } from "./domain/webhook";
 import { certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
 import { SSHDeployer } from "./deployer";
 import { ensureAdmin } from "./lib/auth";
-import { runMigrations } from "./db/migrate";
 import { WorkerLease } from "./worker/lease";
 import { enqueueSyncJob } from "./worker/sync-jobs";
 import { reserveOhttpsCall } from "./worker/daily-limit";
@@ -268,7 +267,6 @@ async function deliverPendingNotifications() {
 }
 
 async function run() {
-  await runMigrations();
   try {
     const password = await ensureAdmin();
     logger.info("worker started");

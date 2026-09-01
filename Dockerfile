@@ -14,17 +14,17 @@ RUN pnpm run build
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-ENV LOG_ARCHIVE_DIR=/app/logs
 RUN addgroup -S app && adduser -S app -G app
-COPY --from=build /app/.next/standalone ./
-COPY --from=build /app/.next/static ./.next/static
-COPY --from=build /app/public ./public
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=build /app/app ./app
-COPY --from=build /app/drizzle ./drizzle
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/docker-entrypoint.sh ./docker-entrypoint.sh
-RUN mkdir -p /app/data /app/certs /app/logs && chown -R app:app /app
+COPY --chown=app:app --from=build /app/.next/standalone ./
+COPY --chown=app:app --from=build /app/.next/static ./.next/static
+COPY --chown=app:app --from=build /app/public ./public
+COPY --chown=app:app --from=deps /app/node_modules ./node_modules
+COPY --chown=app:app --from=build /app/app ./app
+COPY --chown=app:app --from=build /app/drizzle ./drizzle
+COPY --chown=app:app --from=build /app/package.json ./package.json
+COPY --chown=app:app --from=build /app/tsconfig.json ./tsconfig.json
+COPY --chown=app:app --from=build /app/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN mkdir -p /app/data && chown app:app /app/data
 USER app
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 EXPOSE 3000

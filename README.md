@@ -35,7 +35,15 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The container entrypoint applies database migrations automatically. Persistent volumes hold SQLite data, certificate versions, and logs.
+Compose builds one shared image for `web` and `worker`; the Worker applies database migrations before processing tasks. All persistent files are bind-mounted in `./data` by default: the SQLite database, immutable certificate versions (`./data/certs`), and retained log archives (`./data/logs`). Set `OHTTPS_DATA_DIR` to an absolute host path to store them elsewhere.
+
+To move an existing installation from the former named data volume, stop Compose, back up the destination directory, then copy the volume contents once:
+
+```bash
+docker run --rm -v ohttps-deploy_ssl_data:/from:ro -v "$PWD/data":/to alpine sh -c 'cp -a /from/. /to/'
+```
+
+GitHub Actions publishes the shared image to `ghcr.io/sdrpsps/ohttps-deploy`: pushes to `main` publish `latest` and a commit-SHA tag, while `v*` Git tags publish their version tag. It can also be started manually from the Actions page; no local registry credentials are needed.
 
 Configure ohttps credentials, Webhook URL/signing secret, renewal limits, scan frequency, log retention, and the shared SSH private key in **设置**. Secrets are stored in SQLite and are never returned by the API; the Worker reads them directly. Webhook configuration is not read from environment variables. Certificate versions default to `./data/certs`, alongside the default database path. Before retention removes historic logs and audit events, the Worker writes a permission-restricted JSON archive to `LOG_ARCHIVE_DIR` (default `./data/logs`). Use **立即刷新** to enqueue an ohttps sync; it may incur an ohttps API charge. The Worker validates and stores a new immutable certificate version, then automatically creates deployments for matching enabled policies.
 
