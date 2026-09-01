@@ -17,9 +17,9 @@ type SettingsForm = z.infer<typeof schema>;
 
 export type SettingsSummary = Omit<SettingsForm, "ohttpsApiId" | "ohttpsApiKey" | "webhookSecret"> & { ohttpsConfigured: boolean; webhookSecretConfigured: boolean; sharedSshPrivateKeyConfigured: boolean };
 
-type Props = { open: boolean; busy: boolean; settings: SettingsSummary | null; onOpenChange: (open: boolean) => void; onSave: (value: SettingsForm) => Promise<boolean>; onConfigureSshKey: () => void };
+type Props = { open: boolean; busy: boolean; settings: SettingsSummary | null; onOpenChange: (open: boolean) => void; onSave: (value: SettingsForm) => Promise<boolean>; onConfigureSshKey: () => void; onChangePassword: () => void };
 
-export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onConfigureSshKey }: Props) {
+export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onConfigureSshKey, onChangePassword }: Props) {
   const form = useForm<SettingsForm>({ resolver: zodResolver(schema), defaultValues: defaults });
   useEffect(() => { if (open) form.reset({ ...defaults, ...settings, ohttpsApiId: "", ohttpsApiKey: "", webhookSecret: "" }); }, [form, open, settings]);
   async function submit(value: SettingsForm) { if (await onSave(value)) onOpenChange(false); }
@@ -47,7 +47,7 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onC
             </section>
             <section className="flex items-center justify-between rounded-lg border p-4"><div><p className="text-sm font-semibold">SSH 部署凭据</p><p className="mt-1 text-xs text-muted-foreground">所有服务器共用一把私钥，数据库文件需限制访问权限。</p><p className="mt-1 text-xs">{settings?.sharedSshPrivateKeyConfigured ? "已配置" : "尚未配置"}</p></div><Button type="button" variant="outline" onClick={onConfigureSshKey}>配置私钥</Button></section>
             <section className="rounded-lg border p-4"><h3 className="text-sm font-semibold">日志与保留策略</h3><p className="mt-1 text-xs text-muted-foreground">日志自动清理前请先完成归档或确认。</p></section>
-            <section className="rounded-lg border p-4"><h3 className="text-sm font-semibold">管理员安全</h3><p className="mt-1 text-xs text-muted-foreground">管理员密码仅用于登录，不会出现在 API 响应或业务日志中。</p></section>
+            <section className="flex items-center justify-between gap-4 rounded-lg border p-4"><div><h3 className="text-sm font-semibold">管理员安全</h3><p className="mt-1 text-xs text-muted-foreground">管理员密码仅用于登录，不会出现在 API 响应或业务日志中。</p></div><Button type="button" variant="outline" onClick={onChangePassword}>修改密码</Button></section>
             <Button className="w-full" disabled={busy}>{busy ? "保存中..." : "保存设置"}</Button>
           </form>
         </Form>

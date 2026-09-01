@@ -9,6 +9,7 @@ import { ActivityPanel } from "@/components/activity-panel";
 import { NotificationPanel } from "@/components/notification-panel";
 import { PoliciesPanel } from "@/components/policies-panel";
 import { CertificateFormDialog } from "@/components/console/certificate-form-dialog";
+import { ChangePasswordDialog } from "@/components/console/change-password-dialog";
 import { CertificatePanel } from "@/components/console/certificate-panel";
 import { ConsoleLayout } from "@/components/console/console-layout";
 import { DeleteDialog } from "@/components/console/delete-dialog";
@@ -57,6 +58,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const [serverDialogOpen, setServerDialogOpen] = useState(false);
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [changePasswordDialogOpen, setChangePasswordDialogOpen] = useState(false);
   const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
   const [editingServer, setEditingServer] = useState<ManagedServer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -130,6 +132,22 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     } finally {
       setBusy(false);
     }
+  }
+
+  async function changePassword(value: { currentPassword: string; newPassword: string }) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/auth/change-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
+      if (!response.ok) {
+        toast.error((await response.json().catch(() => null))?.error?.message ?? "当前密码错误或新密码不符合要求");
+        return false;
+      }
+      toast.success("管理员密码已修改");
+      return true;
+    } catch {
+      toast.error("密码修改失败，请稍后重试");
+      return false;
+    } finally { setBusy(false); }
   }
 
   async function refreshCertificate(id: string) {
@@ -297,7 +315,10 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
           setSettingsDialogOpen(false);
           setKeyDialogOpen(true);
         }}
+        onChangePassword={() => setChangePasswordDialogOpen(true)}
       />
+
+      <ChangePasswordDialog open={changePasswordDialogOpen} busy={busy} onOpenChange={setChangePasswordDialogOpen} onSave={changePassword} />
 
       <DeleteDialog
         target={deleteTarget}
