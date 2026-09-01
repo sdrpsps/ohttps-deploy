@@ -27,6 +27,8 @@ type OverviewPanelProps = {
   workerOnline: boolean;
   failedDeployments: number;
   failedSyncJobs: number;
+  onHandleFailedDeployments?: () => void;
+  onHandleFailedSyncJobs?: () => void;
 };
 
 const metricStyles = {
@@ -45,6 +47,8 @@ export function OverviewPanel({
   workerOnline,
   failedDeployments,
   failedSyncJobs,
+  onHandleFailedDeployments,
+  onHandleFailedSyncJobs,
 }: OverviewPanelProps) {
   const enabledServers = servers.filter((server) => server.enabled).length;
   const metrics = [
@@ -120,13 +124,13 @@ export function OverviewPanel({
             title: `有 ${failedDeployments} 个部署任务失败`,
             description: "部分服务器未能成功应用新证书，建议前往排查或重试。",
             action: "处理部署",
-            onClick: () => onNavigate("activity"),
+            onClick: onHandleFailedDeployments ?? (() => onNavigate("activity")),
           },
           failedSyncJobs > 0 && {
             title: `有 ${failedSyncJobs} 个证书同步失败`,
             description: "从 ohttps 同步最新证书未成功，建议检查网络与 API 凭据。",
             action: "处理同步",
-            onClick: () => onNavigate("activity"),
+            onClick: onHandleFailedSyncJobs ?? (() => onNavigate("certificates")),
           },
           expiringCount > 0 && {
             title: `有 ${expiringCount} 张证书即将过期`,

@@ -21,7 +21,22 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [certificateId, setCertificateId] = useState("");
   const [serverId, setServerId] = useState("");
+  const [status, setStatus] = useState("");
   const [from, setFrom] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const depId = params.get("deploymentId");
+    const st = params.get("status");
+    const certId = params.get("certificateId");
+    const srvId = params.get("serverId");
+    if (depId) setSelectedId(depId);
+    if (st) setStatus(st);
+    if (certId) setCertificateId(certId);
+    if (srvId) setServerId(srvId);
+  }, []);
+
   const query = useMemo(() => new URLSearchParams(Object.entries({
     certificateId,
     serverId,
@@ -47,18 +62,27 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
   }, [historyError]);
 
   async function action(id: string, name: "retry" | "cancel") {
-    const response = await fetch(`/api/deployments/${id}/${name}`, { method: "POST" });
-    if (!response.ok) {
-      toast.error("操作未完成");
-      return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/deployments/${id}/${name}`, { method: "POST" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        toast.error(body?.error?.message ?? "操作未完成");
+        return;
+      }
+      toast.success(name === "retry" ? "重试任务已创建" : "任务已取消");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.deployments }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.logs(query) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.auditEvents }),
+      ]);
+      if (name === "cancel") await queryClient.invalidateQueries({ queryKey: queryKeys.deployment(id) });
+      if (name === "retry" && body?.data?.id) {
+        setSelectedId(body.data.id);
+      }
+    } finally {
+      setBusy(false);
     }
-    toast.success(name === "retry" ? "重试任务已创建" : "任务已取消");
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.deployments }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.logs(query) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.auditEvents }),
-    ]);
-    if (name === "cancel") await queryClient.invalidateQueries({ queryKey: queryKeys.deployment(id) });
   }
 
   useEffect(() => {
@@ -85,14 +109,23 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
         deployments={deployments}
         certificateId={certificateId}
         serverId={serverId}
+        status={status}
         from={from}
         onCertificateChange={setCertificateId}
         onServerChange={setServerId}
+        onStatusChange={setStatus}
         onFromChange={setFrom}
         onOpen={setSelectedId}
         onAction={(id, name) => void action(id, name)}
       />
-      {selected && <DeploymentDetailPanel deployment={selected} onClose={() => setSelectedId(null)} />}
+      {selected && (
+        <DeploymentDetailPanel
+          deployment={selected}
+          onClose={() => setSelectedId(null)}
+          onAction={(id, name) => void action(id, name)}
+          busy={busy}
+        />
+      )}
       <ActivityTables logs={logs} auditEvents={auditEvents} />
     </div>
   );

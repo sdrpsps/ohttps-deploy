@@ -73,7 +73,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     { queryKey: queryKeys.settings, queryFn: () => getApiData<SettingsSummary>("/api/settings") },
     { queryKey: queryKeys.policies, queryFn: () => getApiData<PoliciesData>("/api/deployment-policies"), enabled: ["overview", "certificates", "policies"].includes(section) },
     { queryKey: queryKeys.health, queryFn: () => getApiData<{ worker: boolean }>("/api/health") },
-    { queryKey: queryKeys.deployments, queryFn: () => getApiData<Array<{ status: string }>>("/api/deployments"), enabled: ["overview", "activity"].includes(section) },
+    { queryKey: queryKeys.deployments, queryFn: () => getApiData<Array<{ id: string; certificateId: string; status: string }>>("/api/deployments"), enabled: ["overview", "activity"].includes(section) },
     { queryKey: queryKeys.syncJobs, queryFn: () => getApiData<SyncJob[]>("/api/certificate-sync-jobs"), enabled: ["overview", "certificates"].includes(section) },
   ] });
   const certificates = certificatesQuery.data ?? [];
@@ -81,9 +81,46 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const settings = settingsQuery.data ?? null;
   const policyCount = policiesQuery.data?.policies.length ?? 0;
   const workerOnline = Boolean(healthQuery.data?.worker);
-  const failedDeployments = deploymentsQuery.data?.filter((item) => item.status === "failed").length ?? 0;
+
+  const latestDeploymentByCert = useMemo(() => {
+    const map = new Map<string, { id: string; certificateId: string; status: string }>();
+    for (const dep of deploymentsQuery.data ?? []) {
+      if (!map.has(dep.certificateId)) {
+        map.set(dep.certificateId, dep);
+      }
+    }
+    return map;
+  }, [deploymentsQuery.data]);
+
+  const failedDeploymentItems = useMemo(() => {
+    return Array.from(latestDeploymentByCert.values()).filter(
+      (item) => item.status === "failed" || item.status === "partial"
+    );
+  }, [latestDeploymentByCert]);
+
+  const failedDeployments = failedDeploymentItems.length;
+  const latestFailedDeploymentId = failedDeploymentItems[0]?.id;
+
   const syncJobs = syncJobsQuery.data ?? [];
-  const failedSyncJobs = syncJobs.filter((item) => item.status === "failed").length;
+  const latestSyncJobByCert = useMemo(() => {
+    const map = new Map<string, SyncJob>();
+    for (const job of syncJobs) {
+      if (!map.has(job.certificateId)) {
+        map.set(job.certificateId, job);
+      }
+    }
+    return map;
+  }, [syncJobs]);
+
+  const failedSyncJobItems = useMemo(() => {
+    return Array.from(latestSyncJobByCert.values()).filter(
+      (job) => job.status === "failed"
+    );
+  }, [latestSyncJobByCert]);
+
+  const failedSyncJobs = failedSyncJobItems.length;
+  const latestFailedSyncJobId = failedSyncJobItems[0]?.id;
+
   const loading = [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery].some((query) => query.isLoading);
   const loadError = [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery].find((query) => query.error)?.error;
 
@@ -198,6 +235,22 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     if (item) router.push(item.href);
   };
 
+  const handleFailedDeployments = () => {
+    if (latestFailedDeploymentId) {
+      router.push(`/deployments?deploymentId=${latestFailedDeploymentId}&status=failed`);
+    } else {
+      router.push("/deployments?status=failed");
+    }
+  };
+
+  const handleFailedSyncJobs = () => {
+    if (latestFailedSyncJobId) {
+      openSyncTask(latestFailedSyncJobId);
+    } else {
+      navigate("certificates");
+    }
+  };
+
   const openSyncTask = (id: string) => {
     if (!id) return;
     const params = new URLSearchParams(window.location.search);
@@ -222,6 +275,8 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         workerOnline={workerOnline}
         failedDeployments={failedDeployments}
         failedSyncJobs={failedSyncJobs}
+        onHandleFailedDeployments={handleFailedDeployments}
+        onHandleFailedSyncJobs={handleFailedSyncJobs}
         onCreateCertificate={() => openCertificateDialog()}
         onNavigate={navigate}
       />

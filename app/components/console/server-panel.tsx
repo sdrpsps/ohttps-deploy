@@ -102,22 +102,24 @@ function ServerRow({
           {server.enabled ? "启用" : "停用"}
         </Badge>
       </TableCell>
-      <TableCell className="space-x-1 text-right">
-        <Button variant="outline" size="sm" disabled={busy || !server.hostFingerprint} onClick={() => onTest(server)}>
-          <RefreshCw /> 测试连接
-        </Button>
-        <Button variant="ghost" size="icon" disabled={busy} onClick={() => onEdit(server)} aria-label={`编辑服务器 ${server.name}`}>
-          <Pencil className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={busy}
-          onClick={() => onDelete({ type: "server", id: server.id, name: server.name })}
-          aria-label={`删除服务器 ${server.name}`}
-        >
-          <Trash2 className="size-4 text-destructive" />
-        </Button>
+      <TableCell className="text-right">
+        <div className="flex items-center justify-end gap-1">
+          <Button variant="outline" size="sm" disabled={busy || !server.hostFingerprint} onClick={() => onTest(server)}>
+            <RefreshCw /> 测试连接
+          </Button>
+          <Button variant="ghost" size="icon" disabled={busy} onClick={() => onEdit(server)} aria-label={`编辑服务器 ${server.name}`}>
+            <Pencil className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={busy}
+            onClick={() => onDelete({ type: "server", id: server.id, name: server.name })}
+            aria-label={`删除服务器 ${server.name}`}
+          >
+            <Trash2 className="size-4 text-destructive" />
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );

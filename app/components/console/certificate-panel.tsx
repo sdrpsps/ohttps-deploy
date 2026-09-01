@@ -157,23 +157,25 @@ function CertificateRow({
           {statusLabel}
         </Badge>
       </TableCell>
-      <TableCell className="space-x-1 text-right">
-        <Button variant="outline" size="sm" disabled={busy} onClick={action.onClick}>
-          <RefreshCw /> {action.label}
-        </Button>
-        {latestJob && !syncInProgress && <Button variant="ghost" size="sm" onClick={() => onViewSyncJob(latestJob.id)}>查看同步</Button>}
-        <Button variant="ghost" size="icon" disabled={busy} onClick={() => onEdit(certificate)} aria-label={`编辑证书 ${certificate.name}`}>
-          <Pencil className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={busy}
-          onClick={() => onDelete({ type: "certificate", id: certificate.id, name: certificate.name })}
-          aria-label={`删除证书 ${certificate.name}`}
-        >
-          <Trash2 className="size-4 text-destructive" />
-        </Button>
+      <TableCell className="text-right">
+        <div className="flex items-center justify-end gap-1">
+          <Button variant="outline" size="sm" disabled={busy} onClick={action.onClick}>
+            <RefreshCw /> {action.label}
+          </Button>
+          {latestJob && !syncInProgress && <Button variant="ghost" size="sm" onClick={() => onViewSyncJob(latestJob.id)}>查看同步</Button>}
+          <Button variant="ghost" size="icon" disabled={busy} onClick={() => onEdit(certificate)} aria-label={`编辑证书 ${certificate.name}`}>
+            <Pencil className="size-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={busy}
+            onClick={() => onDelete({ type: "certificate", id: certificate.id, name: certificate.name })}
+            aria-label={`删除证书 ${certificate.name}`}
+          >
+            <Trash2 className="size-4 text-destructive" />
+          </Button>
+        </div>
       </TableCell>
     </TableRow>
   );
