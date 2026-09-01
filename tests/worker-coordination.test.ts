@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 
 async function run() {
   process.env.DATABASE_URL = ":memory:";
-  const [{ migrate }, { db }, { certificates, certificateSyncJobs }, { WorkerLease }, { enqueueSyncJob }, { reserveOhttpsCall }, { watchCancellation }] = await Promise.all([
-    import("drizzle-orm/libsql/migrator"), import("../app/db"), import("../app/db/schema"), import("../app/worker/lease"), import("../app/worker/sync-jobs"), import("../app/worker/daily-limit"), import("../app/worker/cancellation"),
+  const [{ migrate }, { db }, { certificates, certificateSyncJobs }, { WorkerLease }, { enqueueSyncJob }, { reserveOhttpsCall }, { watchCancellation }, { startHeartbeat }] = await Promise.all([
+    import("drizzle-orm/libsql/migrator"), import("../app/db"), import("../app/db/schema"), import("../app/worker/lease"), import("../app/worker/sync-jobs"), import("../app/worker/daily-limit"), import("../app/worker/cancellation"), import("../app/worker/heartbeat"),
   ]);
   await migrate(db, { migrationsFolder: "./drizzle" });
 
@@ -30,6 +30,14 @@ async function run() {
   await cancellation.check();
   assert.equal(cancellation.signal.aborted, true);
   cancellation.stop();
+  let heartbeats = 0;
+  const stopHeartbeat = startHeartbeat(async () => { heartbeats += 1; }, 10);
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  stopHeartbeat();
+  const stoppedAt = heartbeats;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(stoppedAt >= 2);
+  assert.equal(heartbeats, stoppedAt);
   console.log("worker coordination tests passed");
 }
 

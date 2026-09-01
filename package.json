@@ -11,7 +11,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx app/db/migrate.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/config.test.ts && tsx tests/domain.test.ts && tsx tests/phase4.test.ts && tsx tests/worker.test.ts && tsx tests/worker-coordination.test.ts && tsx tests/ssh-deployer.test.ts && tsx tests/archive.test.ts && tsx tests/auth.test.ts && tsx tests/security.test.ts && tsx tests/ssh-private-key-route.test.ts && tsx tests/settings-route.test.ts && tsx tests/activity-routes.test.ts && tsx tests/delete-routes.test.ts && tsx tests/update-routes.test.ts && tsx tests/deployment-route.test.ts && tsx tests/deployment-policies-route.test.ts && tsx tests/query-config.test.ts && tsx tests/server-fingerprint-route.test.ts"
+    "test": "tsx tests/config.test.ts && tsx tests/domain.test.ts && tsx tests/phase4.test.ts && tsx tests/worker.test.ts && tsx tests/worker-coordination.test.ts && tsx tests/ssh-deployer.test.ts && tsx tests/archive.test.ts && tsx tests/auth.test.ts && tsx tests/security.test.ts && tsx tests/ssh-private-key-route.test.ts && tsx tests/settings-route.test.ts && tsx tests/activity-routes.test.ts && tsx tests/delete-routes.test.ts && tsx tests/update-routes.test.ts && tsx tests/deployment-route.test.ts && tsx tests/deployment-policies-route.test.ts && tsx tests/health-route.test.ts && tsx tests/query-config.test.ts && tsx tests/server-fingerprint-route.test.ts"
   },
   "dependencies": {
     "@better-auth/drizzle-adapter": "^1.7.2",

@@ -19,6 +19,7 @@ import { enqueueSyncJob } from "./worker/sync-jobs";
 import { reserveOhttpsCall } from "./worker/daily-limit";
 import { archiveExpiredRecords } from "./worker/archive";
 import { watchCancellation } from "./worker/cancellation";
+import { startHeartbeat } from "./worker/heartbeat";
 
 const config = loadConfig();
 const logger = createLogger("worker");
@@ -26,12 +27,16 @@ const certificateStore = new CertificateStore(config.CERTIFICATE_STORAGE_DIR);
 let runtimeSettings: RuntimeSettings = { ...runtimeDefaults, ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "", webhookSecret: "" };
 
 let stopping = false;
-const stop = (signal: string) => { stopping = true; logger.info("worker stopping", { signal }); };
+let stopHeartbeat: (() => void) | undefined;
+const stop = (signal: string) => { stopping = true; stopHeartbeat?.(); logger.info("worker stopping", { signal }); };
 process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
 
 let polling = false;
 const workerLease = new WorkerLease();
+async function recordHeartbeat() {
+  await db.insert(settings).values({ key: "worker_heartbeat", value: new Date().toISOString() }).onConflictDoUpdate({ target: settings.key, set: { value: new Date().toISOString(), updatedAt: new Date() } });
+}
 async function pollQueue() {
   if (polling || stopping) return;
   polling = true;
@@ -44,7 +49,7 @@ async function pollQueue() {
   try {
     runtimeSettings = await loadRuntimeSettings();
     assertLease();
-    await db.insert(settings).values({ key: "worker_heartbeat", value: new Date().toISOString() }).onConflictDoUpdate({ target: settings.key, set: { value: new Date().toISOString(), updatedAt: new Date() } });
+    await recordHeartbeat();
     await scanCertificates();
     assertLease();
     await processSyncQueue();
@@ -246,10 +251,13 @@ async function run() {
   } catch (error) {
     logger.error("admin bootstrap failed", { error: String(error) });
   }
-  while (!stopping) {
-    await pollQueue();
-    await new Promise((resolve) => setTimeout(resolve, Math.max(15_000, runtimeSettings.schedulerIntervalMinutes * 60_000)));
-  }
+  stopHeartbeat = startHeartbeat(recordHeartbeat, 30_000, (error) => logger.warn("worker heartbeat failed", { error: String(error) }));
+  try {
+    while (!stopping) {
+      await pollQueue();
+      await new Promise((resolve) => setTimeout(resolve, Math.max(15_000, runtimeSettings.schedulerIntervalMinutes * 60_000)));
+    }
+  } finally { stopHeartbeat?.(); stopHeartbeat = undefined; }
 }
 
 run().catch((error) => { logger.error("worker crashed", { error: String(error) }); process.exitCode = 1; });
