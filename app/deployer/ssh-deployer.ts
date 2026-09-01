@@ -56,13 +56,21 @@ export class SSHDeployer implements Deployer {
     try { validateCommand(target.reloadCommand); if (target.healthCheckCommand) validateCommand(target.healthCheckCommand); } catch (error) { return { targetId: target.id, ok: false, error: (error as Error).message }; }
     if (options.dryRun) return { targetId: target.id, ok: true };
     if (options.signal?.aborted) return { targetId: target.id, ok: false, error: "cancelled" };
-    const cert = await readFile(material.certificatePath); const key = await readFile(material.privateKeyPath);
+    await Promise.all([readFile(material.certificatePath), readFile(material.privateKeyPath)]);
     const { Client: SshClient } = await import("ssh2");
     const client = this.options.clientFactory?.() ?? new SshClient();
     const tempRoot = `/tmp/ohttps-deploy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const backupCert = posix.join(tempRoot, "previous-fullchain.pem");
+    const backupKey = posix.join(tempRoot, "previous-privkey.pem");
+    const missingCert = posix.join(tempRoot, "fullchain-was-missing");
+    const missingKey = posix.join(tempRoot, "privkey-was-missing");
+    const commandOptions = { signal: options.signal, timeoutMs: target.timeoutSeconds * 1000 };
+    let replacementStarted = false;
+    let preserveArtifacts = false;
     try {
       await new Promise<void>((resolve, reject) => { client.once("ready", () => resolve()).once("error", reject).connect(this.connectConfig(target)); });
-      await this.exec(client, `mkdir -p ${shellQuote(tempRoot)}`, options.signal);
+      await this.exec(client, "nginx -t", commandOptions);
+      await this.exec(client, `mkdir -p ${shellQuote(tempRoot)}`, commandOptions);
       await new Promise<void>((resolve, reject) => client.sftp((error, sftp) => {
         if (error || !sftp) return reject(error ?? new Error("sftp unavailable"));
         sftp.fastPut(material.certificatePath, posix.join(tempRoot, "fullchain.pem"), (putError) => {
@@ -70,28 +78,55 @@ export class SSHDeployer implements Deployer {
           sftp.fastPut(material.privateKeyPath, posix.join(tempRoot, "privkey.pem"), (keyError) => keyError ? reject(keyError) : resolve());
         });
       }));
-      await this.exec(client, `chmod 0644 ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && chmod 0600 ${shellQuote(posix.join(tempRoot, "privkey.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "privkey.pem"))}`, options.signal);
-      await this.exec(client, `mv ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} ${shellQuote(target.certPath)} && mv ${shellQuote(posix.join(tempRoot, "privkey.pem"))} ${shellQuote(target.privateKeyPath)}`, options.signal);
-      await this.exec(client, target.reloadCommand, options.signal);
-      if (target.healthCheckCommand) await this.exec(client, target.healthCheckCommand, options.signal);
+      await this.exec(client, `chmod 0644 ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && chmod 0600 ${shellQuote(posix.join(tempRoot, "privkey.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "privkey.pem"))}`, commandOptions);
+      await this.exec(client, backupCommand(target.certPath, backupCert, missingCert), commandOptions);
+      await this.exec(client, backupCommand(target.privateKeyPath, backupKey, missingKey), commandOptions);
+      replacementStarted = true;
+      await this.exec(client, `mv ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} ${shellQuote(target.certPath)} && mv ${shellQuote(posix.join(tempRoot, "privkey.pem"))} ${shellQuote(target.privateKeyPath)}`, commandOptions);
+      await this.exec(client, "nginx -t", commandOptions);
+      await this.exec(client, target.reloadCommand, commandOptions);
+      if (target.healthCheckCommand) await this.exec(client, target.healthCheckCommand, commandOptions);
       return { targetId: target.id, ok: true, exitCode: 0 };
-    } catch (error) { return { targetId: target.id, ok: false, error: sanitizeError((error as Error).message) }; }
-    finally { try { await this.exec(client, `rm -rf -- ${shellQuote(tempRoot)}`); } catch { /* best effort cleanup */ } client.end(); }
+    } catch (error) {
+      let message = sanitizeError((error as Error).message);
+      if (replacementStarted) {
+        try {
+          await this.exec(client, `${restoreCommand(target.certPath, backupCert, missingCert)} && ${restoreCommand(target.privateKeyPath, backupKey, missingKey)} && nginx -t && ${target.reloadCommand}`, commandOptions);
+          message = `${message}; previous certificate restored`;
+        } catch (rollbackError) {
+          preserveArtifacts = true;
+          message = `${message}; rollback failed: ${sanitizeError((rollbackError as Error).message)}`;
+        }
+      }
+      return { targetId: target.id, ok: false, error: message };
+    } finally {
+      if (!preserveArtifacts) try { await this.exec(client, `rm -rf -- ${shellQuote(tempRoot)}`, commandOptions); } catch { /* best effort cleanup */ }
+      client.end();
+    }
   }
 
-  private exec(client: Client, command: string, signal?: AbortSignal): Promise<string> {
+  private exec(client: Client, command: string, options: { signal?: AbortSignal; timeoutMs: number }): Promise<string> {
     return new Promise((resolve, reject) => {
-      if (signal?.aborted) { reject(new Error("cancelled")); return; }
+      if (options.signal?.aborted) { reject(new Error("cancelled")); return; }
       let activeStream: ClientChannel | undefined;
-      const abort = () => { activeStream?.destroy(); reject(new Error("cancelled")); };
-      signal?.addEventListener("abort", abort, { once: true });
+      let finished = false;
+      const finish = (callback: () => void) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        options.signal?.removeEventListener("abort", abort);
+        callback();
+      };
+      const abort = () => { activeStream?.destroy(); finish(() => reject(new Error("cancelled"))); };
+      const timeout = setTimeout(() => { activeStream?.destroy(); finish(() => reject(new Error(`remote command timed out after ${options.timeoutMs}ms`))); }, options.timeoutMs);
+      options.signal?.addEventListener("abort", abort, { once: true });
       client.exec(command, (error, stream) => {
-        if (error) { signal?.removeEventListener("abort", abort); reject(error); return; }
+        if (error) { finish(() => reject(error)); return; }
         activeStream = stream;
         let output = "";
         stream.on("data", (chunk: Buffer) => { output += chunk.toString(); });
         stream.stderr.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-        stream.on("close", (code: number) => { signal?.removeEventListener("abort", abort); code === 0 ? resolve(output) : reject(new Error(`remote command exited with code ${code}`)); });
+        stream.on("close", (code: number) => { code === 0 ? finish(() => resolve(output)) : finish(() => reject(new Error(`remote command exited with code ${code}`))); });
       });
     });
   }
@@ -123,5 +158,9 @@ export function normalizeFingerprint(fp?: string | null): string {
 }
 
 function sanitizeError(message: string) { return message.replace(/(pass(word)?|private.?key|authorization|token)\s*[:=]\s*[^\s]+/gi, "$1=[REDACTED]").slice(0, 500); }
+
+function backupCommand(path: string, backup: string, missing: string) { return `if test -e ${shellQuote(path)}; then cp -p ${shellQuote(path)} ${shellQuote(backup)}; else touch ${shellQuote(missing)}; fi`; }
+
+function restoreCommand(path: string, backup: string, missing: string) { return `if test -e ${shellQuote(missing)}; then rm -f -- ${shellQuote(path)}; else cp -p ${shellQuote(backup)} ${shellQuote(path)}; fi`; }
 
 function shellQuote(value: string) { return `'${value.replace(/'/g, "'\\''")}'`; }

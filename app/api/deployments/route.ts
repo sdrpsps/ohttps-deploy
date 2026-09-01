@@ -3,7 +3,7 @@ import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
-import { certificates, certificateVersions, deployments, deploymentTargets, servers } from "@/db/schema";
+import { certificateTargets, certificates, certificateVersions, deployments, deploymentTargets, servers } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -34,12 +34,11 @@ export async function POST(request: Request) {
   const [certificate] = await db.select({ id: certificates.id }).from(certificates).where(eq(certificates.id, input.certificateId)).limit(1);
   const [version] = await db.select({ id: certificateVersions.id, certificateId: certificateVersions.certificateId }).from(certificateVersions).where(eq(certificateVersions.id, input.certificateVersionId)).limit(1);
   if (!certificate || !version || version.certificateId !== input.certificateId) return NextResponse.json({ error: { code: "NOT_FOUND", message: "certificate or version not found" } }, { status: 404 });
+  const enabledServers = await db.select({ id: servers.id }).from(certificateTargets).innerJoin(servers, eq(certificateTargets.serverId, servers.id)).where(and(eq(certificateTargets.certificateId, input.certificateId), eq(servers.enabled, true)));
+  if (!enabledServers.length) return NextResponse.json({ error: { code: "NO_DEPLOYMENT_TARGET", message: "no enabled servers are assigned to this certificate" } }, { status: 409 });
   const id = randomUUID();
   await db.insert(deployments).values({ id, ...input });
-  const enabledServers = await db.select({ id: servers.id }).from(servers).where(eq(servers.enabled, true));
-  if (enabledServers.length) {
-    await db.insert(deploymentTargets).values(enabledServers.map((server: { id: string }) => ({ id: randomUUID(), deploymentId: id, serverId: server.id })));
-  }
+  await db.insert(deploymentTargets).values(enabledServers.map((server: { id: string }) => ({ id: randomUUID(), deploymentId: id, serverId: server.id })));
   await recordAudit("deployment.created", "deployment", id);
   return NextResponse.json({ data: { id, status: "queued", targetCount: enabledServers.length } }, { status: 202 });
 }

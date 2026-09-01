@@ -3,6 +3,7 @@ import { z } from "zod";
 export const envSchema = z.object({
   DATABASE_URL: z.string().trim().min(1).default("./data/ohttps-deploy.db"),
   CERTIFICATE_STORAGE_DIR: z.string().trim().min(1).default("./data/certs"),
+  LOG_ARCHIVE_DIR: z.string().trim().min(1).default("./data/logs"),
   AUTH_SECRET: z.string().trim().min(32).default("development-only-change-me-32chars"),
 });
 
@@ -23,6 +24,7 @@ export function redactedConfig(config: AppConfig) {
   return {
     databaseUrl: config.DATABASE_URL,
     certificateStorageDir: config.CERTIFICATE_STORAGE_DIR,
+    logArchiveDir: config.LOG_ARCHIVE_DIR,
     authSecretConfigured: config.AUTH_SECRET !== "development-only-change-me-32chars",
   };
 }

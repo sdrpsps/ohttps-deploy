@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, isNull, lte, lt, or } from "drizzle-orm";
+import { and, desc, eq, isNull, lte, or } from "drizzle-orm";
 import { loadConfig } from "./lib/config";
 import { createLogger } from "./lib/logger";
 import { loadRuntimeSettings, runtimeDefaults, type RuntimeSettings } from "./lib/runtime-settings";
@@ -10,10 +10,15 @@ import { validateCertificatePair } from "./domain/certificate";
 import { OHTTPSClient, redactSensitive } from "./domain/ohttps-client";
 import { shouldScheduleSync } from "./domain/renewal";
 import { postWebhook, type WebhookEvent } from "./domain/webhook";
-import { auditEvents, certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
+import { certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
 import { SSHDeployer } from "./deployer";
 import { ensureAdmin } from "./lib/auth";
 import { runMigrations } from "./db/migrate";
+import { WorkerLease } from "./worker/lease";
+import { enqueueSyncJob } from "./worker/sync-jobs";
+import { reserveOhttpsCall } from "./worker/daily-limit";
+import { archiveExpiredRecords } from "./worker/archive";
+import { watchCancellation } from "./worker/cancellation";
 
 const config = loadConfig();
 const logger = createLogger("worker");
@@ -26,26 +31,40 @@ process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
 
 let polling = false;
+const workerLease = new WorkerLease();
 async function pollQueue() {
   if (polling || stopping) return;
   polling = true;
+  let leaseLost = false;
+  if (!await workerLease.acquire()) { polling = false; return; }
+  const renewLease = setInterval(() => {
+    void workerLease.renew().then((held) => { leaseLost ||= !held; }).catch(() => { leaseLost = true; });
+  }, 10_000);
+  const assertLease = () => { if (leaseLost) throw new Error("worker lease lost"); };
   try {
     runtimeSettings = await loadRuntimeSettings();
+    assertLease();
     await db.insert(settings).values({ key: "worker_heartbeat", value: new Date().toISOString() }).onConflictDoUpdate({ target: settings.key, set: { value: new Date().toISOString(), updatedAt: new Date() } });
     await scanCertificates();
+    assertLease();
     await processSyncQueue();
+    assertLease();
     const queued = await db.select().from(deployments).where(eq(deployments.status, "queued")).limit(10);
     for (const deployment of queued) await processDeployment(deployment.id);
+    assertLease();
     await deliverPendingNotifications();
     await purgeExpiredRecords();
   } catch (error) { logger.error("queue poll failed", { error: String(error) }); }
-  finally { polling = false; }
+  finally {
+    clearInterval(renewLease);
+    await workerLease.release().catch((error) => logger.warn("worker lease release failed", { error: String(error) }));
+    polling = false;
+  }
 }
 
 async function purgeExpiredRecords() {
   const cutoff = new Date(Date.now() - runtimeSettings.logRetentionDays * 24 * 60 * 60 * 1000);
-  await db.delete(logs).where(lt(logs.createdAt, cutoff));
-  await db.delete(auditEvents).where(lt(auditEvents.createdAt, cutoff));
+  await archiveExpiredRecords(cutoff, config.LOG_ARCHIVE_DIR);
 }
 
 async function scanCertificates() {
@@ -64,9 +83,7 @@ async function scanCertificates() {
     else if (await hasRecentCertificateAlert(certificate.id)) await queueNotification("certificate.recovered", "certificate", certificate.id, "success");
     const syncedForCurrentVersion = await hasSyncedCurrentVersion(certificate.id, current.fingerprint);
     if (!shouldScheduleSync({ expiresAt: current.notAfter, lastCheckedAt: certificate.lastSyncAt ?? certificate.lastCheckedAt, now, renewBeforeDays: certificate.renewBeforeDays, minimumIntervalSeconds: runtimeSettings.ohttpsMinIntervalSeconds, syncedForCurrentVersion })) continue;
-    const [existing] = await db.select({ id: certificateSyncJobs.id }).from(certificateSyncJobs)
-      .where(and(eq(certificateSyncJobs.certificateId, certificate.id), or(eq(certificateSyncJobs.status, "queued"), eq(certificateSyncJobs.status, "running")))).limit(1);
-    if (!existing) await db.insert(certificateSyncJobs).values({ id: randomUUID(), certificateId: certificate.id, trigger: "scheduled" });
+    await enqueueSyncJob(certificate.id, "scheduled");
   }
 }
 
@@ -130,11 +147,7 @@ async function createAutoDeployment(certificateId: string, certificateVersionId:
 }
 
 async function consumeOhttpsCall() {
-  const key = `ohttps_calls_${new Date().toISOString().slice(0, 10)}`;
-  const [counter] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, key)).limit(1);
-  const count = Number(counter?.value ?? 0);
-  if (!Number.isSafeInteger(count) || count >= runtimeSettings.ohttpsDailyCallLimit) throw new Error("ohttps daily call limit reached");
-  await db.insert(settings).values({ key, value: String(count + 1) }).onConflictDoUpdate({ target: settings.key, set: { value: String(count + 1), updatedAt: new Date() } });
+  if (!await reserveOhttpsCall(runtimeSettings.ohttpsDailyCallLimit)) throw new Error("ohttps daily call limit reached");
 }
 
 function syncCycleKey(certificateId: string, fingerprint: string) {
@@ -161,29 +174,22 @@ async function processDeployment(deploymentId: string) {
   if (!sharedKey && !deployment.dryRun) { await failDeployment(deploymentId, "shared SSH private key is not configured"); return; }
   const results: Array<{ ok: boolean; error?: string; exitCode?: number }> = [];
   const concurrency = Math.max(1, Math.min(deployment.concurrency, targets.length || 1));
-  for (let offset = 0; offset < targets.length; offset += concurrency) {
-    const batch = targets.slice(offset, offset + concurrency);
-    const batchResults = await Promise.all(batch.map(async (target: any, batchIndex: number) => {
-      const controller = new AbortController();
-      const cancelWatch = setInterval(async () => {
-        const [state] = await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1);
-        if (state?.status === "cancelled") controller.abort();
-      }, 1_000);
-      const [state] = await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1);
-      if (state?.status === "cancelled") {
-        clearInterval(cancelWatch);
-        await db.update(deploymentTargets).set({ status: "cancelled", finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-        return { ok: false, error: "cancelled" };
-      }
-      await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-      const result = await new SSHDeployer({ privateKey: sharedKey?.value ?? "" }).deploy(target, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath }, { dryRun: deployment.dryRun, signal: controller.signal });
-      clearInterval(cancelWatch);
-      await db.update(deploymentTargets).set({ status: result.ok ? "succeeded" : result.error === "cancelled" ? "cancelled" : "failed", exitCode: result.exitCode ?? null, errorSummary: result.error ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-      await db.insert(logs).values({ id: randomUUID(), deploymentId, targetId: target.id, sequence: offset + batchIndex + 1, level: result.ok ? "info" : "error", message: result.ok ? `${target.name} ${deployment.dryRun ? "dry-run succeeded" : "deployed successfully"}` : `${target.name} deployment failed: ${result.error ?? "unknown error"}` });
-      return result;
-    }));
-    results.push(...batchResults);
-  }
+  const cancellation = watchCancellation(async () => (await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1))[0]?.status === "cancelled");
+  try {
+    await cancellation.check();
+    for (let offset = 0; offset < targets.length; offset += concurrency) {
+      const batch = targets.slice(offset, offset + concurrency);
+      const batchResults = await Promise.all(batch.map(async (target: any, batchIndex: number) => {
+        if (cancellation.signal.aborted) return { ok: false, error: "cancelled" };
+        await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
+        const result = await new SSHDeployer({ privateKey: sharedKey?.value ?? "" }).deploy(target, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath }, { dryRun: deployment.dryRun, signal: cancellation.signal });
+        await db.update(deploymentTargets).set({ status: result.ok ? "succeeded" : result.error === "cancelled" ? "cancelled" : "failed", exitCode: result.exitCode ?? null, errorSummary: result.error ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
+        await db.insert(logs).values({ id: randomUUID(), deploymentId, targetId: target.id, sequence: offset + batchIndex + 1, level: result.ok ? "info" : "error", message: result.ok ? `${target.name} ${deployment.dryRun ? "dry-run succeeded" : "deployed successfully"}` : `${target.name} deployment failed: ${result.error ?? "unknown error"}` });
+        return result;
+      }));
+      results.push(...batchResults);
+    }
+  } finally { cancellation.stop(); }
   const [latestState] = await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1);
   if (latestState?.status === "cancelled") return;
   const failed = results.filter((result) => !result.ok).length;
