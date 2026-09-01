@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bell, LayoutDashboard, Server, Settings2, ShieldCheck, KeyRound, Workflow } from "lucide-react";
+import { Activity, Bell, LayoutDashboard, Server, Settings2, ShieldCheck, KeyRound, Key, Workflow } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ActivityPanel } from "@/components/activity-panel";
@@ -222,11 +222,8 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         workerOnline={workerOnline}
         failedDeployments={failedDeployments}
         failedSyncJobs={failedSyncJobs}
-        ohttpsConfigured={settings?.ohttpsConfigured ?? false}
-        policyCount={policyCount}
         onCreateCertificate={() => openCertificateDialog()}
         onNavigate={navigate}
-        onSettings={() => setSettingsDialogOpen(true)}
       />
     ),
     certificates: (
@@ -274,6 +271,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
           {section === "overview" && settings && (
             <OnboardingWizard steps={[
               { label: "配置 ohttps 凭据", done: settings.ohttpsConfigured, action: "去配置", onAction: () => setSettingsDialogOpen(true), icon: KeyRound },
+              { label: "配置 SSH 私钥", done: settings.sharedSshPrivateKeyConfigured, action: "去配置", onAction: () => setKeyDialogOpen(true), icon: Key },
               { label: "添加第一张证书", done: certificates.length > 0, action: "添加证书", onAction: () => openCertificateDialog(), icon: ShieldCheck },
               { label: "添加部署服务器", done: servers.length > 0, action: "添加服务器", onAction: () => openServerDialog(), icon: Server },
               { label: "创建部署策略", done: policyCount > 0, action: "配置策略", onAction: () => navigate("policies"), icon: Workflow },

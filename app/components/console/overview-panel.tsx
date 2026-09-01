@@ -24,9 +24,6 @@ type OverviewPanelProps = {
   expiringCount: number;
   onCreateCertificate: () => void;
   onNavigate: (section: "certificates" | "servers" | "policies" | "activity") => void;
-  onSettings: () => void;
-  ohttpsConfigured: boolean;
-  policyCount: number;
   workerOnline: boolean;
   failedDeployments: number;
   failedSyncJobs: number;
@@ -45,9 +42,6 @@ export function OverviewPanel({
   expiringCount,
   onCreateCertificate,
   onNavigate,
-  onSettings,
-  ohttpsConfigured,
-  policyCount,
   workerOnline,
   failedDeployments,
   failedSyncJobs,
@@ -116,14 +110,30 @@ export function OverviewPanel({
 
       <NextActions
         items={[
-          !ohttpsConfigured && { title: "尚未配置 ohttps 凭据", description: "配置 API ID 和 API Key 后才能同步证书。", action: "去配置凭据", onClick: onSettings },
-          certificates.length === 0 && { title: "尚未添加证书", description: "先添加一张 ohttps 证书，开始管理续期。", action: "添加证书", onClick: onCreateCertificate },
-          servers.length === 0 && { title: "尚未添加服务器", description: "添加 SSH 部署目标，证书才能自动分发。", action: "添加服务器", onClick: () => onNavigate("servers") },
-          policyCount === 0 && certificates.length > 0 && servers.length > 0 && { title: "尚未创建部署策略", description: "把证书映射到服务器，启用自动部署。", action: "配置策略", onClick: () => onNavigate("policies") },
-          !workerOnline && { title: "Worker 未运行", description: "任务会暂时排队，启动 Worker 后自动执行。", action: "查看任务", onClick: () => onNavigate("activity") },
-          failedDeployments > 0 && { title: `有 ${failedDeployments} 个失败部署任务`, description: "查看错误原因并重试失败任务。", action: "查看任务", onClick: () => onNavigate("activity") },
-          failedSyncJobs > 0 && { title: `有 ${failedSyncJobs} 个失败同步任务`, description: "查看失败原因并重新同步。", action: "查看任务", onClick: () => onNavigate("activity") },
-          expiringCount > 0 && { title: `有 ${expiringCount} 张证书即将过期`, description: "尽快同步并确认部署结果。", action: "查看证书", onClick: () => onNavigate("certificates") },
+          !workerOnline && {
+            title: "Worker 处于离线状态",
+            description: "后台定时扫描与自动部署已暂停，请检查 Worker 容器。",
+            action: "查看任务",
+            onClick: () => onNavigate("activity"),
+          },
+          failedDeployments > 0 && {
+            title: `有 ${failedDeployments} 个部署任务失败`,
+            description: "部分服务器未能成功应用新证书，建议前往排查或重试。",
+            action: "处理部署",
+            onClick: () => onNavigate("activity"),
+          },
+          failedSyncJobs > 0 && {
+            title: `有 ${failedSyncJobs} 个证书同步失败`,
+            description: "从 ohttps 同步最新证书未成功，建议检查网络与 API 凭据。",
+            action: "处理同步",
+            onClick: () => onNavigate("activity"),
+          },
+          expiringCount > 0 && {
+            title: `有 ${expiringCount} 张证书即将过期`,
+            description: "已进入续期时间窗口，请关注自动同步与部署进展。",
+            action: "查看证书",
+            onClick: () => onNavigate("certificates"),
+          },
         ].filter(Boolean) as NextAction[]}
       />
 
@@ -178,5 +188,25 @@ type NextAction = { title: string; description: string; action: string; onClick:
 
 function NextActions({ items }: { items: NextAction[] }) {
   if (!items.length) return null;
-  return <Card><CardHeader><CardTitle className="text-lg">下一步操作</CardTitle><CardDescription>根据当前配置，建议优先处理以下事项。</CardDescription></CardHeader><CardContent className="grid gap-3 md:grid-cols-2">{items.map((item) => <div key={item.title} className="flex items-center justify-between gap-4 rounded-lg border p-3"><div><p className="text-sm font-medium">{item.title}</p><p className="mt-1 text-xs text-muted-foreground">{item.description}</p></div><Button variant="outline" size="sm" onClick={item.onClick}>{item.action}</Button></div>)}</CardContent></Card>;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">运维待办</CardTitle>
+        <CardDescription>检测到以下需要关注或处理的运维事项。</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 md:grid-cols-2">
+        {items.map((item) => (
+          <div key={item.title} className="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <div>
+              <p className="text-sm font-medium">{item.title}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{item.description}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={item.onClick}>
+              {item.action}
+            </Button>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
 }

@@ -16,18 +16,46 @@ export function OnboardingWizard({ steps }: { steps: Step[] }) {
           <Badge variant="secondary">已完成 {completed}/{steps.length} 步</Badge>
         </div>
       </CardHeader>
-      <CardContent className="grid gap-4 p-5 pt-0 md:grid-cols-5">
-        {steps.map((step, index) => { const Icon = step.icon; return (
-          <div key={step.label} className="rounded-lg border bg-card p-4">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              {step.done ? <Check className="size-4 text-primary" /> : <Circle className="size-4 text-muted-foreground" />}
-              <span>{index + 1}. {step.label}</span>
+      <CardContent className="grid gap-3.5 p-5 pt-0 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+        {steps.map((step, index) => {
+          const Icon = step.icon;
+          return (
+            <div key={step.label} className="flex flex-col justify-between rounded-lg border bg-card p-3.5">
+              <div className="flex items-start gap-2.5">
+                <div className="mt-0.5 shrink-0">
+                  {step.done ? (
+                    <Check className="size-4 text-primary" />
+                  ) : (
+                    <Circle className="size-4 text-muted-foreground" />
+                  )}
+                </div>
+                <span className="text-sm font-medium leading-snug">
+                  {index + 1}. {step.label}
+                </span>
+              </div>
+              <div className="mt-3 pl-[26px] text-xs">
+                {!step.done && step.action && step.onAction && (
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-xs font-normal"
+                    onClick={step.onAction}
+                  >
+                    {step.action}
+                    <ExternalLink className="ml-1 size-3" />
+                  </Button>
+                )}
+                {step.done && <span className="font-medium text-primary">已完成</span>}
+                {!step.done && !step.action && (
+                  <span className="text-muted-foreground">
+                    <Icon className="mr-1 inline size-3" />
+                    等待 Worker
+                  </span>
+                )}
+              </div>
             </div>
-            {!step.done && step.action && step.onAction && <Button variant="link" size="sm" className="mt-2 h-auto p-0" onClick={step.onAction}>{step.action}<ExternalLink className="ml-1 size-3" /></Button>}
-            {step.done && <p className="mt-2 text-xs text-primary">已完成</p>}
-            {!step.done && !step.action && <p className="mt-2 text-xs text-muted-foreground"><Icon className="mr-1 inline size-3" />等待 Worker</p>}
-          </div>
-        ); })}
+          );
+        })}
       </CardContent>
     </Card>
   );
