@@ -7,6 +7,7 @@ import { loadRuntimeSettings, runtimeDefaults, type RuntimeSettings } from "./li
 import { db } from "./db";
 import { CertificateStore } from "./domain/certificate-store";
 import { validateCertificatePair } from "./domain/certificate";
+import { deploymentPaths } from "./domain/deployment-path";
 import { OHTTPSClient, redactSensitive } from "./domain/ohttps-client";
 import { shouldScheduleSync } from "./domain/renewal";
 import { postWebhook, type WebhookEvent } from "./domain/webhook";
@@ -217,7 +218,10 @@ async function markSyncedCurrentVersion(certificateId: string, fingerprint: stri
 async function processDeployment(deploymentId: string) {
   const [deployment] = await db.update(deployments).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(and(eq(deployments.id, deploymentId), eq(deployments.status, "queued"))).returning();
   if (!deployment) return;
-  const targets = await db.select({ id: deploymentTargets.id, serverId: servers.id, name: servers.name, host: servers.host, port: servers.port, username: servers.username, hostFingerprint: servers.hostFingerprint, certPath: servers.certPath, privateKeyPath: servers.privateKeyPath, validationCommand: servers.validationCommand, reloadCommand: servers.reloadCommand, healthCheckCommand: servers.healthCheckCommand, timeoutSeconds: servers.timeoutSeconds }).from(deploymentTargets).innerJoin(servers, eq(deploymentTargets.serverId, servers.id)).where(eq(deploymentTargets.deploymentId, deploymentId));
+  const [certificate] = await db.select({ domain: certificates.domain }).from(certificates).where(eq(certificates.id, deployment.certificateId)).limit(1);
+  if (!certificate) { await failDeployment(deploymentId, "certificate not found"); return; }
+  const remotePaths = deploymentPaths(certificate.domain);
+  const targets = await db.select({ id: deploymentTargets.id, serverId: servers.id, name: servers.name, host: servers.host, port: servers.port, username: servers.username, hostFingerprint: servers.hostFingerprint, validationCommand: servers.validationCommand, reloadCommand: servers.reloadCommand, healthCheckCommand: servers.healthCheckCommand, timeoutSeconds: servers.timeoutSeconds }).from(deploymentTargets).innerJoin(servers, eq(deploymentTargets.serverId, servers.id)).where(eq(deploymentTargets.deploymentId, deploymentId));
   const [version] = await db.select({ certPath: certificateVersions.certPath, privateKeyPath: certificateVersions.privateKeyPath }).from(certificateVersions).where(eq(certificateVersions.id, deployment.certificateVersionId)).limit(1);
   if (!version) { await failDeployment(deploymentId, "certificate version not found"); return; }
   const [sharedKey] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "shared_ssh_private_key")).limit(1);
@@ -232,7 +236,7 @@ async function processDeployment(deploymentId: string) {
       const batchResults = await Promise.all(batch.map(async (target: any, batchIndex: number) => {
         if (cancellation.signal.aborted) return { ok: false, error: "cancelled" };
         await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-        const result = await new SSHDeployer({ privateKey: sharedKey?.value ?? "" }).deploy(target, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath }, { dryRun: deployment.dryRun, signal: cancellation.signal });
+        const result = await new SSHDeployer({ privateKey: sharedKey?.value ?? "" }).deploy({ ...target, ...remotePaths }, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath }, { dryRun: deployment.dryRun, signal: cancellation.signal });
         await db.update(deploymentTargets).set({ status: result.ok ? "succeeded" : result.error === "cancelled" ? "cancelled" : "failed", exitCode: result.exitCode ?? null, errorSummary: result.error ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
         await db.insert(logs).values({ id: randomUUID(), deploymentId, targetId: target.id, sequence: offset + batchIndex + 1, level: result.ok ? "info" : "error", message: result.ok ? `${target.name} ${deployment.dryRun ? "dry-run succeeded" : "deployed successfully"}` : `${target.name} deployment failed: ${result.error ?? "unknown error"}` });
         return result;

@@ -32,8 +32,6 @@ const serverSchema = z.object({
   port: z.coerce.number().int().min(1).max(65535),
   username: z.string().min(1, "请输入用户名"),
   hostFingerprint: z.string().min(1, "请输入主机指纹"),
-  certPath: z.string().min(1, "请输入证书路径"),
-  privateKeyPath: z.string().min(1, "请输入私钥路径"),
   validationCommand: z.string().min(1, "请输入部署前检查命令"),
   reloadCommand: z.string().min(1, "请输入重载命令"),
   healthCheckCommand: z.string(),
@@ -140,10 +138,6 @@ export function ServerFormDialog({
             <details className="rounded-lg border px-3 py-2">
               <summary className="cursor-pointer text-sm font-medium">高级部署配置</summary>
               <div className="mt-4 space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <TextField control={form.control} name="certPath" label="远端证书路径" placeholder="/etc/nginx/ssl/fullchain.pem" />
-                  <TextField control={form.control} name="privateKeyPath" label="远端私钥路径" placeholder="/etc/nginx/ssl/privkey.pem" />
-                </div>
                 <CommandField control={form.control} name="validationCommand" label="部署前检查命令" placeholder="sudo -n nginx -t" />
                 <CommandField control={form.control} name="reloadCommand" label="重载命令" placeholder="sudo -n nginx -s reload" />
                 <CommandField control={form.control} name="healthCheckCommand" label="健康检查命令（可选）" placeholder="curl -fsS http://127.0.0.1/health" />
@@ -173,7 +167,7 @@ function TextField({
   placeholder,
 }: {
   control: Control<ServerForm>;
-  name: "name" | "host" | "username" | "hostFingerprint" | "certPath" | "privateKeyPath";
+  name: "name" | "host" | "username" | "hostFingerprint";
   label: string;
   placeholder: string;
 }) {
@@ -204,8 +198,6 @@ const emptyServerForm: ServerForm = {
   port: 22,
   username: "cert",
   hostFingerprint: "",
-  certPath: "/etc/nginx/ssl/fullchain.pem",
-  privateKeyPath: "/etc/nginx/ssl/privkey.pem",
   validationCommand: "sudo -n nginx -t",
   reloadCommand: "sudo -n nginx -s reload",
   healthCheckCommand: "",
@@ -219,8 +211,6 @@ function toFormValues(server: ManagedServer): ServerForm {
     port: server.port,
     username: server.username,
     hostFingerprint: server.hostFingerprint ?? "",
-    certPath: server.certPath,
-    privateKeyPath: server.privateKeyPath,
     validationCommand: server.validationCommand,
     reloadCommand: server.reloadCommand,
     healthCheckCommand: server.healthCheckCommand ?? "",

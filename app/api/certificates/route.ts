@@ -5,13 +5,14 @@ import { z } from "zod";
 import { db } from "@/db";
 import { certificates } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
+import { isCertificateDomain } from "@/domain/deployment-path";
 
 export const runtime = "nodejs";
 
 const createSchema = z.object({
   ohttpsCertificateId: z.string().trim().min(1).max(200),
   name: z.string().trim().min(1).max(200),
-  domain: z.string().trim().min(1).max(253),
+  domain: z.string().trim().min(1).max(253).refine(isCertificateDomain, "invalid certificate domain"),
   renewBeforeDays: z.coerce.number().int().min(1).max(365).optional(),
 });
 

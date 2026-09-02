@@ -8,6 +8,7 @@ async function run() {
   assert.equal(configFailure.result.ok, false);
   assert.match(configFailure.result.error ?? "", /previous certificate restored/);
   assert.ok(configFailure.commands.some((command) => command.includes("sudo -n nginx -t")));
+  assert.ok(configFailure.commands.some((command) => command.includes("mkdir -p -- '/etc/nginx/ssl'")));
   assert.ok(configFailure.commands.some((command) => command.includes("previous-fullchain.pem")));
 
   const timeout = await deployWith("timeout");

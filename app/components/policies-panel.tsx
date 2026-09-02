@@ -83,7 +83,7 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
 
     <Dialog open={Boolean(selectedCertificate)} onOpenChange={(open) => !open && setSelectedCertificate(null)}>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>选择部署服务器</DialogTitle><DialogDescription>为 {selectedCertificate?.name} 勾选部署目标。首次配置已默认全选。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>选择部署服务器</DialogTitle><DialogDescription>为 {selectedCertificate?.name} 勾选部署目标。路径会自动使用 /etc/nginx/ssl/{selectedCertificate?.domain}/。</DialogDescription></DialogHeader>
         <div className="space-y-3">
           <div className="flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" onClick={() => setSelectedServerIds(new Set())}>取消全选</Button><Button type="button" variant="outline" size="sm" onClick={() => setSelectedServerIds(new Set(enabledServers.map((server) => server.id)))}>全选</Button></div>
           {enabledServers.map((server) => {

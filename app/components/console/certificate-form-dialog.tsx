@@ -25,7 +25,7 @@ import type { Certificate } from "./types";
 
 const certificateSchema = z.object({
   name: z.string().min(1, "请输入名称"),
-  domain: z.string().min(1, "请输入域名"),
+  domain: z.string().regex(/^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i, "请输入有效域名"),
   ohttpsCertificateId: z.string().min(1, "请输入证书 ID"),
   renewBeforeDays: z.coerce.number().int().min(1).max(365),
 });

@@ -146,12 +146,10 @@ sudo bash scripts/setup-ohttps-deploy-user.sh --docker nginx --key "$(cat /安�
 
 打开**服务器**，填写主机、端口和部署用户名。先点击“获取指纹”，由 Web 服务所在网络发起 SSH 握手并填入 SHA-256 主机指纹；保存服务器后执行“连接测试”。
 
-默认远端路径和命令如下，可按单机实际情况覆盖：
+远端路径按证书域名自动确定，无需填写：`/etc/nginx/ssl/<domain>/fullchain.pem` 和 `/etc/nginx/ssl/<domain>/privkey.pem`。服务器只需配置连接信息和命令：
 
 | 设置 | 默认值 |
 | --- | --- |
-| 证书路径 | `/etc/nginx/ssl/fullchain.pem` |
-| 私钥路径 | `/etc/nginx/ssl/privkey.pem` |
 | 部署前检查 | `sudo -n nginx -t` |
 | reload 命令 | `sudo -n nginx -s reload` |
 | 单台超时 | 30 秒 |
@@ -168,6 +166,8 @@ sudo bash scripts/setup-ohttps-deploy-user.sh --docker nginx --key "$(cat /安�
 2. 验证证书、私钥和域名 SAN；发现新版本后原子保存。
 3. 为该证书所有已勾选且已启用的服务器创建部署任务。
 4. 在每台服务器上先校验现有 Nginx 配置，上传临时文件，原子替换，再验证、reload 和可选健康检查。
+
+同一台服务器使用多张独立证书时，部署会按每张证书的域名自动使用不同目录，例如 `/etc/nginx/ssl/example.com/fullchain.pem` 和 `/etc/nginx/ssl/other.example.com/fullchain.pem`。部署会创建缺失的父目录；Nginx 配置也必须分别引用对应的证书与私钥路径。
 
 在**任务**页面打开任务详情，查看每台服务器的状态和日志。首次接入建议先只把低风险服务器纳入策略，验证连接、路径和命令成功后，再扩展到生产服务器；需要 dry-run 时可通过认证 API 创建任务。
 

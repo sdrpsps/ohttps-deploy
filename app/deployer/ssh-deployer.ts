@@ -81,6 +81,7 @@ export class SSHDeployer implements Deployer {
         });
       }));
       await this.exec(client, `chmod 0644 ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && chmod 0600 ${shellQuote(posix.join(tempRoot, "privkey.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "privkey.pem"))}`, commandOptions);
+      await this.exec(client, `mkdir -p -- ${[...new Set([posix.dirname(target.certPath), posix.dirname(target.privateKeyPath)])].map(shellQuote).join(" ")}`, commandOptions);
       await this.exec(client, backupCommand(target.certPath, backupCert, missingCert), commandOptions);
       await this.exec(client, backupCommand(target.privateKeyPath, backupKey, missingKey), commandOptions);
       replacementStarted = true;
