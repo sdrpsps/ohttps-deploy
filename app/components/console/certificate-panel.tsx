@@ -33,8 +33,6 @@ type CertificatePanelProps = {
   onDeploy: (id: string) => void;
   onDelete: (target: DeleteTarget) => void;
   ohttpsConfigured: boolean;
-  deploymentTargetCount: number;
-  onNavigate: (section: "servers" | "policies") => void;
   onViewSyncJob: (id: string) => void;
   onConfigureSettings: () => void;
 };
@@ -50,8 +48,6 @@ export function CertificatePanel({
   onDeploy,
   onDelete,
   ohttpsConfigured,
-  deploymentTargetCount,
-  onNavigate,
   onViewSyncJob,
   onConfigureSettings,
 }: CertificatePanelProps) {
@@ -92,9 +88,7 @@ export function CertificatePanel({
                   onEdit={onEdit}
                   onDelete={onDelete}
                   ohttpsConfigured={ohttpsConfigured}
-                  deploymentTargetCount={deploymentTargetCount}
                   latestJob={jobs.find((job) => job.certificateId === certificate.id)}
-                  onNavigate={onNavigate}
                   onViewSyncJob={onViewSyncJob}
                   onConfigureSettings={onConfigureSettings}
                   onConfirmRefresh={setConfirming}
@@ -121,14 +115,12 @@ function CertificateRow({
   onEdit,
   onDelete,
   ohttpsConfigured,
-  deploymentTargetCount,
   latestJob,
-  onNavigate,
   onViewSyncJob,
   onConfigureSettings,
   onConfirmRefresh,
   onDeploy,
-}: Pick<CertificatePanelProps, "busy" | "onEdit" | "onDelete" | "ohttpsConfigured" | "deploymentTargetCount" | "onNavigate" | "onConfigureSettings" | "onViewSyncJob" | "onDeploy"> & { certificate: Certificate; latestJob?: { id: string; status: string; errorSummary: string | null } | undefined; onConfirmRefresh: (certificate: Certificate) => void }) {
+}: Pick<CertificatePanelProps, "busy" | "onEdit" | "onDelete" | "ohttpsConfigured" | "onConfigureSettings" | "onViewSyncJob" | "onDeploy"> & { certificate: Certificate; latestJob?: { id: string; status: string; errorSummary: string | null } | undefined; onConfirmRefresh: (certificate: Certificate) => void }) {
   const days = daysUntil(certificate.expiresAt);
   const needsAttention = days !== null && days <= certificate.renewBeforeDays;
   const statusClass = needsAttention && certificate.status === "active"
@@ -138,7 +130,7 @@ function CertificateRow({
   const statusVariant = certificate.status === "disabled" ? "secondary" : needsAttention ? "outline" : "default";
 
   const syncInProgress = latestJob?.status === "queued" || latestJob?.status === "running";
-  const action = !ohttpsConfigured ? { label: "去配置 ohttps 凭据", onClick: onConfigureSettings } : deploymentTargetCount === 0 ? { label: "配置部署服务器", onClick: () => onNavigate("servers") } : syncInProgress ? { label: "查看同步", onClick: () => onViewSyncJob(latestJob!.id) } : { label: latestJob?.status === "failed" ? "重新同步" : "立即同步", onClick: () => onConfirmRefresh(certificate) };
+  const action = !ohttpsConfigured ? { label: "去配置 ohttps 凭据", onClick: onConfigureSettings } : syncInProgress ? { label: "查看同步", onClick: () => onViewSyncJob(latestJob!.id) } : { label: latestJob?.status === "failed" ? "重新同步" : "立即同步", onClick: () => onConfirmRefresh(certificate) };
   return (
     <TableRow>
       <TableCell className="font-medium">

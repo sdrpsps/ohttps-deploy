@@ -305,8 +305,6 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onDeploy={(id) => void deployCertificate(id)}
         onDelete={setDeleteTarget}
         ohttpsConfigured={settings?.ohttpsConfigured ?? false}
-        deploymentTargetCount={policyCount}
-        onNavigate={(target) => navigate(target)}
         onViewSyncJob={openSyncTask}
         onConfigureSettings={() => setSettingsDialogOpen(true)}
       />
