@@ -14,7 +14,7 @@ RUN pnpm run build
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
-RUN addgroup -S app && adduser -S app -G app
+RUN apk add --no-cache su-exec && addgroup -S app && adduser -S app -G app
 COPY --chown=app:app --from=build /app/.next/standalone ./
 COPY --chown=app:app --from=build /app/.next/static ./.next/static
 COPY --chown=app:app --from=build /app/public ./public
@@ -25,7 +25,6 @@ COPY --chown=app:app --from=build /app/package.json ./package.json
 COPY --chown=app:app --from=build /app/tsconfig.json ./tsconfig.json
 COPY --chown=app:app --from=build /app/docker-entrypoint.sh ./docker-entrypoint.sh
 RUN mkdir -p /app/data && chown app:app /app/data
-USER app
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 EXPOSE 3000
 CMD ["node", "server.js"]

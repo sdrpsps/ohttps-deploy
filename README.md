@@ -50,14 +50,7 @@ mkdir -p data
 chmod 700 data
 ```
 
-在 Linux Docker 主机上，bind mount 的 `data` 目录还必须可由镜像内的 `app` 用户写入；否则 Worker 无法创建数据库和证书版本。先查看容器内 UID/GID，再在主机上把目录所有权交给它：
-
-```bash
-docker compose run --rm --no-deps --entrypoint sh worker -c 'id'
-sudo chown -R <上一步的uid>:<上一步的gid> data
-```
-
-Docker Desktop 的文件共享通常会映射当前用户；仍应在首次启动后查看 Worker 日志，确认没有 `EACCES` 或数据库写入错误。
+镜像会在启动时将 bind mount 的 `data` 目录交给容器内低权限应用用户，然后再以该用户运行 Web 和 Worker；首次启动不需要手动查询 UID/GID 或执行 `chown`。该目录包含私钥与数据库，仍应保持 `700` 权限且只由受信任的宿主机管理员访问。
 
 编辑 `.env`：
 
