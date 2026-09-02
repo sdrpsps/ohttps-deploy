@@ -47,6 +47,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=tag
+            type=raw,value=latest
             type=sha,prefix=sha-
       - name: Build and publish image
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
