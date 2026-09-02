@@ -369,6 +369,18 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         )}
       />
 
+      <SettingsDialog
+        open={settingsDialogOpen}
+        busy={busy}
+        settings={settings}
+        onOpenChange={setSettingsDialogOpen}
+        onSave={(value) => save("/api/settings", value, "系统设置已保存")}
+        onConfigureSshKey={() => {
+          setKeyDialogOpen(true);
+        }}
+        onChangePassword={() => setChangePasswordDialogOpen(true)}
+      />
+
       <SshKeyDialog
         open={keyDialogOpen}
         configured={settings?.sharedSshPrivateKeyConfigured ?? false}
@@ -378,19 +390,6 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
           const saved = await save("/api/settings/ssh-private-key", { privateKey }, "SSH 私钥已保存");
           return saved;
         }}
-      />
-
-      <SettingsDialog
-        open={settingsDialogOpen}
-        busy={busy}
-        settings={settings}
-        onOpenChange={setSettingsDialogOpen}
-        onSave={(value) => save("/api/settings", value, "系统设置已保存")}
-        onConfigureSshKey={() => {
-          setSettingsDialogOpen(false);
-          setKeyDialogOpen(true);
-        }}
-        onChangePassword={() => setChangePasswordDialogOpen(true)}
       />
 
       <ChangePasswordDialog open={changePasswordDialogOpen} busy={busy} onOpenChange={setChangePasswordDialogOpen} onSave={changePassword} />
