@@ -2,18 +2,18 @@
 
 ## 备份
 
-1. 使用已认证的管理员会话请求 `GET /api/backup`，将返回的 SQLite 文件保存到加密、异地的备份存储。
-2. 同时备份 Docker volume 中的 `certs` 目录；数据库备份本身包含 ohttps、SSH 和 Webhook 凭据，按最高敏感级别保管。
-3. 每日执行一次，保留至少 30 个版本，并定期做恢复演练。
+1. 选择没有同步、部署或恢复任务写入的时间窗口；必要时先停止 Worker。使用已认证的管理员会话请求 `GET /api/backup`，将返回的 SQLite 文件保存到加密、异地的备份存储。
+2. 在同一时间窗口备份 Compose bind mount `${OHTTPS_DATA_DIR:-./data}` 中的 `certs` 目录；数据库记录与证书版本目录不是统一事务，必须保留配套快照。`logs` 目录按审计保留要求一并备份。
+3. 数据库备份包含 ohttps、SSH 和 Webhook 凭据，按最高敏感级别保管。每日执行一次，保留至少 30 个版本，并定期做恢复演练。
 
 ## 恢复
 
-1. 停止 Worker，暂停 Web 流量并确认没有正在运行的部署。
-2. 登录控制台后，向 `POST /api/backup` 上传备份文件，并设置请求头 `x-confirm-restore: yes`。
-3. 保留接口生成的 `.before-restore` 文件，运行 `pnpm run db:migrate`，启动 Worker。
+1. 停止 Worker，切走公网/反向代理流量并确认没有正在运行的部署；保留一个受信任的维护路径到 Web，供管理员调用恢复接口。
+2. 登录控制台后，向 `POST /api/backup` 上传备份文件，并设置请求头 `x-confirm-restore: yes`。同时将 `certs` 目录恢复为与该数据库备份相同时间点的快照。
+3. 保留接口生成的 `.before-restore` 文件。Compose 部署重新启动 Worker 时会运行迁移；本地开发环境则运行 `pnpm run db:migrate` 后再启动 Worker。
 4. 检查 `/api/health`、证书当前版本、服务器配置和最近任务；必要时执行 dry-run，再恢复自动调度。
 
-恢复失败时，将 `.before-restore` 文件移回数据库路径并重新启动服务。恢复后的数据库和证书目录必须由应用用户拥有且不可被其他容器读取。
+恢复失败时，将 `.before-restore` 文件移回数据库路径，并同时恢复与之配套的 `certs` 快照后重新启动服务。`.before-restore` 仅回退数据库，不会回退证书目录。恢复后的数据库和证书目录必须由应用用户拥有且不可被其他容器读取。
 
 ## 目标
 
