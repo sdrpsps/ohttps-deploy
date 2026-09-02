@@ -205,6 +205,18 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     finally { setBusy(false); }
   }
 
+  async function deployCertificate(id: string) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/deployments", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ certificateId: id }) });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) { toast.error(body?.error?.message ?? "部署任务未创建"); return; }
+      toast.success(`已创建 ${body.data.targetCount} 台服务器的部署任务`);
+      router.push(`/deployments?deploymentId=${body.data.id}`);
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "部署任务未创建"); }
+    finally { setBusy(false); }
+  }
+
   async function deleteSelected() {
     if (!deleteTarget) return;
     const deleted = await runAction(
@@ -290,6 +302,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onCreate={() => openCertificateDialog()}
         onEdit={openCertificateDialog}
         onRefresh={(id) => void refreshCertificate(id)}
+        onDeploy={(id) => void deployCertificate(id)}
         onDelete={setDeleteTarget}
         ohttpsConfigured={settings?.ohttpsConfigured ?? false}
         deploymentTargetCount={policyCount}

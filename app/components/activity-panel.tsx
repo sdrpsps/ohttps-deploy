@@ -43,7 +43,7 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
     from: from && new Date(`${from}T00:00:00+08:00`).toISOString(),
   }).filter(([, value]) => value)).toString(), [certificateId, serverId, from]);
 
-  const deploymentsQuery = useQuery({ queryKey: queryKeys.deployments, queryFn: () => getApiData<Deployment[]>("/api/deployments") });
+  const deploymentsQuery = useQuery({ queryKey: queryKeys.deployments, queryFn: () => getApiData<Deployment[]>("/api/deployments"), refetchInterval: (current) => (current.state.data as Deployment[] | undefined)?.some((item) => !terminalStatuses.has(item.status)) ? 1_000 : false });
   const logsQuery = useQuery({ queryKey: queryKeys.logs(query), queryFn: () => getApiData<LogEntry[]>(`/api/logs?${query}`) });
   const auditEventsQuery = useQuery({ queryKey: queryKeys.auditEvents, queryFn: () => getApiData<AuditEntry[]>("/api/audit-events") });
   const selectedQuery = useQuery({
@@ -96,7 +96,7 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
     };
     source.addEventListener("end", () => {
       source.close();
-      void queryClient.invalidateQueries({ queryKey: queryKeys.deployment(selected.id) });
+      void Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.deployment(selected.id) }), queryClient.invalidateQueries({ queryKey: queryKeys.deployments })]);
     });
     return () => source.close();
   }, [selected?.id, selected?.status]);

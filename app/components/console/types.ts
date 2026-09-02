@@ -4,6 +4,7 @@ export type Certificate = {
   id: string;
   name: string;
   domain: string;
+  currentVersionId: string | null;
   ohttpsCertificateId: string;
   status: "active" | "disabled";
   expiresAt: string | null;

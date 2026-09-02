@@ -1,5 +1,5 @@
 "use client";
-import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Pencil, Plus, RefreshCw, Send, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ type CertificatePanelProps = {
   onCreate: () => void;
   onEdit: (certificate: Certificate) => void;
   onRefresh: (id: string) => void;
+  onDeploy: (id: string) => void;
   onDelete: (target: DeleteTarget) => void;
   ohttpsConfigured: boolean;
   deploymentTargetCount: number;
@@ -46,6 +47,7 @@ export function CertificatePanel({
   onCreate,
   onEdit,
   onRefresh,
+  onDeploy,
   onDelete,
   ohttpsConfigured,
   deploymentTargetCount,
@@ -96,6 +98,7 @@ export function CertificatePanel({
                   onViewSyncJob={onViewSyncJob}
                   onConfigureSettings={onConfigureSettings}
                   onConfirmRefresh={setConfirming}
+                  onDeploy={onDeploy}
                 />
               ))
             )}
@@ -124,7 +127,8 @@ function CertificateRow({
   onViewSyncJob,
   onConfigureSettings,
   onConfirmRefresh,
-}: Pick<CertificatePanelProps, "busy" | "onEdit" | "onDelete" | "ohttpsConfigured" | "deploymentTargetCount" | "onNavigate" | "onConfigureSettings" | "onViewSyncJob"> & { certificate: Certificate; latestJob?: { id: string; status: string; errorSummary: string | null } | undefined; onConfirmRefresh: (certificate: Certificate) => void }) {
+  onDeploy,
+}: Pick<CertificatePanelProps, "busy" | "onEdit" | "onDelete" | "ohttpsConfigured" | "deploymentTargetCount" | "onNavigate" | "onConfigureSettings" | "onViewSyncJob" | "onDeploy"> & { certificate: Certificate; latestJob?: { id: string; status: string; errorSummary: string | null } | undefined; onConfirmRefresh: (certificate: Certificate) => void }) {
   const days = daysUntil(certificate.expiresAt);
   const needsAttention = days !== null && days <= certificate.renewBeforeDays;
   const statusClass = needsAttention && certificate.status === "active"
@@ -162,6 +166,7 @@ function CertificateRow({
           <Button variant="outline" size="sm" disabled={busy} onClick={action.onClick}>
             <RefreshCw /> {action.label}
           </Button>
+          {certificate.currentVersionId && certificate.status === "active" && <Button size="sm" disabled={busy} onClick={() => onDeploy(certificate.id)}><Send /> 部署到服务器</Button>}
           {latestJob && !syncInProgress && <Button variant="ghost" size="sm" onClick={() => onViewSyncJob(latestJob.id)}>查看同步</Button>}
           <Button variant="ghost" size="icon" disabled={busy} onClick={() => onEdit(certificate)} aria-label={`编辑证书 ${certificate.name}`}>
             <Pencil className="size-4" />

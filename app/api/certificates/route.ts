@@ -19,6 +19,7 @@ const createSchema = z.object({
 export async function GET() {
   const rows = await db.select({
     id: certificates.id,
+    currentVersionId: certificates.currentVersionId,
     ohttpsCertificateId: certificates.ohttpsCertificateId,
     name: certificates.name,
     domain: certificates.domain,
