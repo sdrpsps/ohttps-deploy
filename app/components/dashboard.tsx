@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, Bell, LayoutDashboard, Server, Settings2, ShieldCheck, KeyRound, Key, Workflow } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -28,28 +28,19 @@ import type {
   DeleteTarget,
   ManagedServer,
   NavigationItem,
+  PoliciesData,
+  SyncJob,
 } from "@/components/console/types";
 
 export type { DashboardSection } from "@/components/console/types";
 
-type SyncJob = {
-  id: string;
-  certificateId: string;
-  certificateName: string;
-  trigger: string;
-  status: string;
-  errorSummary: string | null;
-  createdAt: string;
-};
-type PoliciesData = { policies: Array<{ certificateId: string }>; configuredCertificateIds: string[] };
-
 const navigation: NavigationItem[] = [
-  { value: "overview", label: "总览", description: "证书与部署状态概览", href: "/", icon: LayoutDashboard },
-  { value: "certificates", label: "证书", description: "管理证书、续期阈值与当前状态", href: "/certificates", icon: ShieldCheck },
+  { value: "overview", label: "概览", description: "系统全局状态与关键指标", href: "/overview", icon: LayoutDashboard },
+  { value: "certificates", label: "证书", description: "管理证书资产与同步任务", href: "/certificates", icon: ShieldCheck },
   { value: "servers", label: "服务器", description: "管理部署目标与 SSH 连接配置", href: "/servers", icon: Server },
-  { value: "policies", label: "部署策略", description: "配置证书到服务器的自动部署映射", href: "/deployment-policies", icon: Settings2 },
-  { value: "activity", label: "任务日志", description: "查看部署任务、实时日志与审计记录", href: "/deployments", icon: Activity },
-  { value: "notifications", label: "通知", description: "查看 Webhook 投递状态并手动重试", href: "/notifications", icon: Bell },
+  { value: "policies", label: "部署策略", description: "按证书配置目标服务器", href: "/policies", icon: Workflow },
+  { value: "activity", label: "活动与日志", description: "部署记录与系统执行日志", href: "/activity", icon: Activity },
+  { value: "notifications", label: "系统通知", description: "任务通知与失败告警历史", href: "/notifications", icon: Bell },
 ];
 
 export default function Dashboard({ section = "overview" }: { section?: DashboardSection }) {
@@ -57,29 +48,55 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const pathname = usePathname();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [keyDialogOpen, setKeyDialogOpen] = useState(false);
+  const [changePasswordDialogOpen, setChangePasswordDialogOpen] = useState(false);
   const [certificateDialogOpen, setCertificateDialogOpen] = useState(false);
   const [serverDialogOpen, setServerDialogOpen] = useState(false);
-  const [keyDialogOpen, setKeyDialogOpen] = useState(false);
-  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [changePasswordDialogOpen, setChangePasswordDialogOpen] = useState(false);
   const [editingCertificate, setEditingCertificate] = useState<Certificate | null>(null);
   const [editingServer, setEditingServer] = useState<ManagedServer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
 
-  const [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery] = useQueries({ queries: [
-    { queryKey: queryKeys.certificates, queryFn: () => getApiData<Certificate[]>("/api/certificates"), enabled: ["overview", "certificates", "policies", "activity"].includes(section) },
-    { queryKey: queryKeys.servers, queryFn: () => getApiData<ManagedServer[]>("/api/servers"), enabled: ["overview", "servers", "policies", "activity"].includes(section) },
-    { queryKey: queryKeys.settings, queryFn: () => getApiData<SettingsSummary>("/api/settings") },
-    { queryKey: queryKeys.policies, queryFn: () => getApiData<PoliciesData>("/api/deployment-policies"), enabled: ["overview", "certificates", "policies"].includes(section) },
-    { queryKey: queryKeys.health, queryFn: () => getApiData<{ worker: boolean }>("/api/health") },
-    { queryKey: queryKeys.deployments, queryFn: () => getApiData<Array<{ id: string; certificateId: string; status: string }>>("/api/deployments"), enabled: ["overview", "activity"].includes(section) },
-    { queryKey: queryKeys.syncJobs, queryFn: () => getApiData<SyncJob[]>("/api/certificate-sync-jobs"), enabled: ["overview", "certificates"].includes(section) },
-  ] });
+  const certificatesQuery = useQuery({ queryKey: queryKeys.certificates, queryFn: () => getApiData<Certificate[]>("/api/certificates"), enabled: ["overview", "certificates", "policies", "activity"].includes(section) });
+  const serversQuery = useQuery({ queryKey: queryKeys.servers, queryFn: () => getApiData<ManagedServer[]>("/api/servers"), enabled: ["overview", "servers", "policies", "activity"].includes(section) });
+  const settingsQuery = useQuery({ queryKey: queryKeys.settings, queryFn: () => getApiData<SettingsSummary>("/api/settings") });
+  const policiesQuery = useQuery({ queryKey: queryKeys.policies, queryFn: () => getApiData<PoliciesData>("/api/deployment-policies"), enabled: ["overview", "certificates", "policies"].includes(section) });
+  const healthQuery = useQuery({ queryKey: queryKeys.health, queryFn: () => getApiData<{ worker: boolean }>("/api/health") });
+  const deploymentsQuery = useQuery({
+    queryKey: queryKeys.deployments,
+    queryFn: () => getApiData<Array<{ id: string; certificateId: string; status: string }>>("/api/deployments"),
+    enabled: ["overview", "activity"].includes(section),
+    refetchInterval: (query) => {
+      const deps = query.state.data;
+      return deps?.some((d) => d.status === "queued" || d.status === "running") ? 3_000 : false;
+    },
+  });
+  const syncJobsQuery = useQuery({
+    queryKey: queryKeys.syncJobs,
+    queryFn: () => getApiData<SyncJob[]>("/api/certificate-sync-jobs"),
+    enabled: ["overview", "certificates"].includes(section),
+    refetchInterval: (query) => {
+      const jobs = query.state.data;
+      return jobs?.some((j) => j.status === "queued" || j.status === "running") ? 3_000 : false;
+    },
+  });
+
   const certificates = certificatesQuery.data ?? [];
   const servers = serversQuery.data ?? [];
   const settings = settingsQuery.data ?? null;
-  const policyCount = policiesQuery.data?.policies.length ?? 0;
+  const policyCount = useMemo(() => {
+    const enabledServerIds = new Set(servers.filter((s) => s.enabled).map((s) => s.id));
+    const configuredSet = new Set(policiesQuery.data?.configuredCertificateIds ?? []);
+    const policies = policiesQuery.data?.policies ?? [];
+    return certificates.reduce((sum, cert) => {
+      const existing = policies.filter((p) => p.certificateId === cert.id);
+      if (!existing.length && !configuredSet.has(cert.id)) {
+        return sum + enabledServerIds.size;
+      }
+      return sum + existing.filter((p) => p.autoDeploy && enabledServerIds.has(p.serverId)).length;
+    }, 0);
+  }, [certificates, servers, policiesQuery.data]);
   const workerOnline = Boolean(healthQuery.data?.worker);
 
   const latestDeploymentByCert = useMemo(() => {
@@ -200,6 +217,10 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
       const body = await response.json().catch(() => null);
       if (!response.ok) { toast.error(body?.error?.message ?? "同步未创建"); return; }
       toast.success("同步任务已创建");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.syncJobs }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.certificates }),
+      ]);
       openSyncTask(body?.data?.taskId ?? "");
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "同步未创建"); }
     finally { setBusy(false); }
@@ -217,14 +238,31 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     finally { setBusy(false); }
   }
 
-  async function deleteSelected() {
+  async function deleteSelected(force?: boolean) {
     if (!deleteTarget) return;
+    const path = `/api/${deleteTarget.type === "certificate" ? "certificates" : "servers"}/${deleteTarget.id}${deleteTarget.type === "server" && force ? "?force=true" : ""}`;
     const deleted = await runAction(
-      `/api/${deleteTarget.type === "certificate" ? "certificates" : "servers"}/${deleteTarget.id}`,
+      path,
       "DELETE",
       `${deleteTarget.name} 已删除`,
     );
     if (deleted) setDeleteTarget(null);
+  }
+
+  async function toggleServerEnabled(server: ManagedServer) {
+    const nextEnabled = !server.enabled;
+    const updated = await save(
+      `/api/servers/${server.id}`,
+      { enabled: nextEnabled },
+      `已${nextEnabled ? "启用" : "停用"}服务器 ${server.name}`,
+      "PATCH"
+    );
+    if (updated) {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.servers }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.policies }),
+      ]);
+    }
   }
 
   function openCertificateDialog(certificate: Certificate | null = null) {
@@ -276,6 +314,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     params.delete("syncTaskId");
     setSyncTaskId(null);
     router.replace(params.size ? `${pathname}?${params.toString()}` : pathname);
+    void reload();
   };
 
   const content = {
@@ -318,6 +357,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onEdit={openServerDialog}
         onTest={(server) => void runAction(`/api/servers/${server.id}/test-connection`, "POST", `${server.name} 连接成功，主机指纹已校验。`)}
         onDelete={setDeleteTarget}
+        onToggleEnabled={(server) => void toggleServerEnabled(server)}
       />
     ),
     policies: <PoliciesPanel certificates={certificates} servers={servers} />,

@@ -30,10 +30,25 @@ export function SyncTaskSheet({ taskId, onOpenChange }: { taskId: string | null;
     };
     source.addEventListener("end", () => {
       source.close();
-      void Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.syncJob(taskId) }), queryClient.invalidateQueries({ queryKey: queryKeys.syncJobs })]);
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.syncJob(taskId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.syncJobs }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.certificates }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.deployments }),
+      ]);
     });
     return () => source.close();
   }, [taskId, task?.status, queryClient]);
+
+  useEffect(() => {
+    if (task && terminalStatuses.has(task.status)) {
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.certificates }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.syncJobs }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.deployments }),
+      ]);
+    }
+  }, [task?.status, queryClient]);
 
   return <Sheet open={Boolean(taskId)} onOpenChange={onOpenChange}><SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl"><SheetHeader><SheetTitle>同步任务</SheetTitle><SheetDescription>{task ? `${task.certificateName} · ${task.id}` : "正在读取任务详情…"}</SheetDescription></SheetHeader>{task && <div className="mt-6 space-y-6"><div className="rounded-lg border bg-muted/50 p-4"><div className="flex flex-wrap items-center gap-2"><Badge variant={task.status === "failed" ? "destructive" : task.status === "succeeded" ? "default" : "secondary"}>{({ queued: "排队中", running: "同步中", succeeded: "成功", failed: "失败", cancelled: "已取消" } as Record<string, string>)[task.status] ?? task.status}</Badge><span className="text-sm font-medium">{phaseLabels[task.phase] ?? task.phase}</span></div><dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-xs text-muted-foreground">触发方式</dt><dd className="mt-1">{task.trigger === "manual" ? "手动" : "定时"}</dd></div><div><dt className="text-xs text-muted-foreground">创建时间</dt><dd className="mt-1">{formatDate(task.createdAt)}</dd></div><div><dt className="text-xs text-muted-foreground">开始时间</dt><dd className="mt-1">{task.startedAt ? formatDate(task.startedAt) : "等待 Worker"}</dd></div><div><dt className="text-xs text-muted-foreground">结束时间</dt><dd className="mt-1">{task.finishedAt ? formatDate(task.finishedAt) : "进行中"}</dd></div></dl>{task.errorSummary && <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{task.errorSummary}</p>}</div><div><h3 className="mb-2 flex items-center gap-2 text-sm font-medium"><Activity className="size-4" />实时日志</h3><div className="max-h-[50vh] space-y-2 overflow-auto rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-100">{logs.map((entry) => <p key={entry.id}><span className="text-slate-500">{formatDate(entry.createdAt)} </span><span className={entry.level === "error" ? "text-red-300" : entry.level === "warn" ? "text-amber-300" : "text-emerald-300"}>{entry.level.toUpperCase()}</span>{" "}{entry.message}</p>)}{logs.length === 0 && <p className="text-slate-400">{task.status === "queued" ? "等待 Worker 接手任务…" : "等待任务日志…"}</p>}</div></div></div>}</SheetContent></Sheet>;
 }

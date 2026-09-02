@@ -7,6 +7,7 @@ import { Control, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,7 @@ const serverSchema = z.object({
   reloadCommand: z.string().min(1, "请输入重载命令"),
   healthCheckCommand: z.string(),
   timeoutSeconds: z.coerce.number().int().min(1).max(300),
+  enabled: z.boolean(),
 });
 
 type ServerForm = z.infer<typeof serverSchema>;
@@ -135,6 +137,26 @@ export function ServerFormDialog({
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="enabled"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center space-x-3 space-y-0 rounded-lg border p-3">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <div className="space-y-1 leading-none">
+                    <FormLabel className="cursor-pointer font-medium">启用此服务器</FormLabel>
+                    <p className="text-xs text-muted-foreground">
+                      停用后该服务器不会接收后续的自动或手动证书部署。
+                    </p>
+                  </div>
+                </FormItem>
+              )}
+            />
             <details className="rounded-lg border px-3 py-2">
               <summary className="cursor-pointer text-sm font-medium">高级部署配置</summary>
               <div className="mt-4 space-y-4">
@@ -202,6 +224,7 @@ const emptyServerForm: ServerForm = {
   reloadCommand: "sudo -n nginx -s reload",
   healthCheckCommand: "",
   timeoutSeconds: 30,
+  enabled: true,
 };
 
 function toFormValues(server: ManagedServer): ServerForm {
@@ -215,5 +238,7 @@ function toFormValues(server: ManagedServer): ServerForm {
     reloadCommand: server.reloadCommand,
     healthCheckCommand: server.healthCheckCommand ?? "",
     timeoutSeconds: server.timeoutSeconds,
+    enabled: server.enabled,
   };
 }
+

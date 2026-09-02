@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
-import { certificateTargets, deploymentTargets, servers } from "@/db/schema";
+import { certificateTargets, deploymentTargets, logs, servers } from "@/db/schema";
 import { validateCommand } from "@/deployer";
 import { recordAudit } from "@/lib/audit";
 
@@ -34,16 +34,25 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   return NextResponse.json({ data: server });
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const [[server], [target]] = await Promise.all([
-    db.select({ id: servers.id }).from(servers).where(eq(servers.id, id)).limit(1),
-    db.select({ id: deploymentTargets.id }).from(deploymentTargets).where(eq(deploymentTargets.serverId, id)).limit(1),
-  ]);
+  const force = new URL(request.url).searchParams.get("force") === "true";
+  const [server] = await db.select({ id: servers.id }).from(servers).where(eq(servers.id, id)).limit(1);
   if (!server) return NextResponse.json({ error: { code: "NOT_FOUND", message: "server not found" } }, { status: 404 });
-  if (target) return NextResponse.json({ error: { code: "HAS_HISTORY", message: "server has deployment history; disable it instead" } }, { status: 409 });
+
+  const targets = await db.select({ id: deploymentTargets.id }).from(deploymentTargets).where(eq(deploymentTargets.serverId, id));
+  if (targets.length > 0) {
+    if (!force) {
+      return NextResponse.json({ error: { code: "HAS_HISTORY", message: "server has deployment history; disable it instead" } }, { status: 409 });
+    }
+    const targetIds = targets.map((t) => t.id);
+    await db.delete(logs).where(inArray(logs.targetId, targetIds));
+    await db.delete(deploymentTargets).where(eq(deploymentTargets.serverId, id));
+  }
+
   await db.delete(certificateTargets).where(eq(certificateTargets.serverId, id));
   await db.delete(servers).where(eq(servers.id, id));
   await recordAudit("server.deleted", "server", id);
   return new NextResponse(null, { status: 204 });
 }
+

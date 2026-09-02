@@ -14,7 +14,7 @@ const selectionKey = (certificateId: string) => `deployment_policy_configured_${
 export async function GET() {
   const [policies, configured] = await Promise.all([
     db.select({ certificateId: certificates.id, certificateName: certificates.name, domain: certificates.domain, serverId: servers.id, serverName: servers.name, host: servers.host, autoDeploy: certificateTargets.autoDeploy, updatedAt: certificateTargets.updatedAt })
-      .from(certificateTargets).innerJoin(certificates, eq(certificateTargets.certificateId, certificates.id)).innerJoin(servers, eq(certificateTargets.serverId, servers.id)).orderBy(desc(certificateTargets.updatedAt)),
+      .from(certificateTargets).innerJoin(certificates, eq(certificateTargets.certificateId, certificates.id)).innerJoin(servers, eq(certificateTargets.serverId, servers.id)).where(eq(servers.enabled, true)).orderBy(desc(certificateTargets.updatedAt)),
     db.select({ key: settings.key }).from(settings).where(like(settings.key, "deployment_policy_configured_%")),
   ]);
   return NextResponse.json({ data: { policies, configuredCertificateIds: configured.map(({ key }) => key.slice("deployment_policy_configured_".length)) } });
@@ -41,7 +41,7 @@ export async function PUT(request: Request) {
   const enabledServers = await db.select({ id: servers.id }).from(servers).where(eq(servers.enabled, true));
   const enabledIds = enabledServers.map(({ id }) => id);
   if (serverIds.some((id) => !enabledIds.includes(id))) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "selected server is unavailable" } }, { status: 400 });
-  if (enabledIds.length) await db.delete(certificateTargets).where(and(eq(certificateTargets.certificateId, parsed.data.certificateId), inArray(certificateTargets.serverId, enabledIds)));
+  await db.delete(certificateTargets).where(eq(certificateTargets.certificateId, parsed.data.certificateId));
   if (serverIds.length) await db.insert(certificateTargets).values(serverIds.map((serverId) => ({ certificateId: parsed.data.certificateId, serverId, autoDeploy: true })));
   await markConfigured(parsed.data.certificateId);
   await recordAudit("deployment_policy.saved", "certificate", parsed.data.certificateId);

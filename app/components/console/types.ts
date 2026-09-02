@@ -42,3 +42,30 @@ export type DeleteTarget = {
   id: string;
   name: string;
 };
+
+export type PolicyItem = {
+  certificateId: string;
+  certificateName?: string;
+  domain?: string;
+  serverId: string;
+  serverName?: string;
+  host?: string;
+  autoDeploy: boolean;
+  updatedAt?: string;
+};
+
+export type PoliciesData = {
+  policies: PolicyItem[];
+  configuredCertificateIds: string[];
+};
+
+export type SyncJob = {
+  id: string;
+  certificateId: string;
+  certificateName: string;
+  trigger: string;
+  status: string;
+  errorSummary: string | null;
+  createdAt: string;
+};
+

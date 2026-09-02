@@ -33,6 +33,10 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
     return new Set(existing.filter((policy) => policy.autoDeploy && enabledServers.some((server) => server.id === policy.serverId)).map((policy) => policy.serverId));
   }
 
+  const activeMappingCount = useMemo(() => {
+    return certificates.reduce((sum, cert) => sum + currentSelection(cert.id).size, 0);
+  }, [certificates, data, enabledServers]);
+
   function openEditor(certificate: Certificate) {
     setSelectedCertificate(certificate);
     setSelectedServerIds(currentSelection(certificate.id));
@@ -62,7 +66,7 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
   return <Card>
     <CardHeader className="flex-row items-start justify-between gap-4">
       <div><CardTitle>部署策略</CardTitle><CardDescription>分别为每张证书选择部署服务器；首次配置默认选择所有已启用服务器。</CardDescription></div>
-      <Badge variant="secondary">{data.policies.length} 个映射</Badge>
+      <Badge variant="secondary">{activeMappingCount} 个生效映射</Badge>
     </CardHeader>
     <CardContent>
       <Table>

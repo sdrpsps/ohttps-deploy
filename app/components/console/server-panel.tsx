@@ -26,6 +26,7 @@ type ServerPanelProps = {
   onEdit: (server: ManagedServer) => void;
   onTest: (server: ManagedServer) => void;
   onDelete: (target: DeleteTarget) => void;
+  onToggleEnabled?: (server: ManagedServer) => void;
 };
 
 export function ServerPanel({
@@ -36,6 +37,7 @@ export function ServerPanel({
   onEdit,
   onTest,
   onDelete,
+  onToggleEnabled,
 }: ServerPanelProps) {
   return (
     <Card>
@@ -73,6 +75,7 @@ export function ServerPanel({
                   onEdit={onEdit}
                   onTest={onTest}
                   onDelete={onDelete}
+                  onToggleEnabled={onToggleEnabled}
                 />
               ))
             )}
@@ -89,6 +92,7 @@ function ServerRow({
   onEdit,
   onTest,
   onDelete,
+  onToggleEnabled,
 }: Omit<ServerPanelProps, "servers" | "loading" | "onCreate"> & { server: ManagedServer }) {
   return (
     <TableRow>
@@ -98,9 +102,17 @@ function ServerRow({
         {server.hostFingerprint ? `${server.hostFingerprint.slice(0, 24)}…` : "未设置"}
       </TableCell>
       <TableCell>
-        <Badge variant={server.enabled ? "default" : "secondary"}>
-          {server.enabled ? "启用" : "停用"}
-        </Badge>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onToggleEnabled?.(server)}
+          className="inline-flex cursor-pointer transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+          title={`点击${server.enabled ? "停用" : "启用"}此服务器`}
+        >
+          <Badge variant={server.enabled ? "default" : "secondary"}>
+            {server.enabled ? "启用" : "停用"}
+          </Badge>
+        </button>
       </TableCell>
       <TableCell className="text-right">
         <div className="flex items-center justify-end gap-1">
