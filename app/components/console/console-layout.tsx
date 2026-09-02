@@ -1,6 +1,6 @@
 "use client";
 
-import { Command, Menu, Settings2 } from "lucide-react";
+import { Menu, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -80,9 +80,7 @@ export function ConsoleLayout({
         <SheetContent side="left" className="w-72 bg-sidebar p-5">
           <SheetHeader className="mb-6 text-left">
             <SheetTitle className="flex items-center gap-3">
-              <span className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground">
-                <Command className="size-5" />
-              </span>
+              <img src="/ohttps-deploy-logo.png" alt="" width={36} height={36} aria-hidden />
               Deploy Console
             </SheetTitle>
             <SheetDescription>证书管理与部署控制台</SheetDescription>
@@ -116,9 +114,7 @@ export function ConsoleLayout({
 function Brand() {
   return (
     <div className="mb-8 flex items-center gap-3 px-3">
-      <div className="grid size-9 place-items-center rounded-xl bg-primary text-primary-foreground">
-        <Command className="size-5" />
-      </div>
+      <img src="/ohttps-deploy-logo.png" alt="OHTTPS Deploy" width={36} height={36} />
       <div>
         <p className="text-[10px] font-bold tracking-[0.24em] text-primary">OHTTPS</p>
         <p className="text-sm font-semibold">Deploy Console</p>

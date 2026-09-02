@@ -50,7 +50,10 @@ export function LoginForm({
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">ohttps 部署控制台</CardTitle>
+          <CardTitle className="flex items-center gap-3 text-2xl">
+            <img src="/ohttps-deploy-logo.png" alt="OHTTPS Deploy" width={40} height={40} />
+            ohttps 部署控制台
+          </CardTitle>
           <CardDescription>
             输入管理员账号，登录证书部署控制台
           </CardDescription>
