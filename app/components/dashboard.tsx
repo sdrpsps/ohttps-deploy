@@ -233,14 +233,14 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
       const body = await response.json().catch(() => null);
       if (!response.ok) { toast.error(body?.error?.message ?? "部署任务未创建"); return; }
       toast.success(`已创建 ${body.data.targetCount} 台服务器的部署任务`);
-      router.push(`/deployments?deploymentId=${body.data.id}`);
+      router.push(`/activity?deploymentId=${body.data.id}`);
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "部署任务未创建"); }
     finally { setBusy(false); }
   }
 
-  async function deleteSelected(force?: boolean) {
+  async function deleteSelected() {
     if (!deleteTarget) return;
-    const path = `/api/${deleteTarget.type === "certificate" ? "certificates" : "servers"}/${deleteTarget.id}${deleteTarget.type === "server" && force ? "?force=true" : ""}`;
+    const path = `/api/${deleteTarget.type === "certificate" ? "certificates" : "servers"}/${deleteTarget.id}`;
     const deleted = await runAction(
       path,
       "DELETE",
@@ -287,9 +287,9 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
 
   const handleFailedDeployments = () => {
     if (latestFailedDeploymentId) {
-      router.push(`/deployments?deploymentId=${latestFailedDeploymentId}&status=failed`);
+      router.push(`/activity?deploymentId=${latestFailedDeploymentId}&status=failed`);
     } else {
-      router.push("/deployments?status=failed");
+      router.push("/activity?status=failed");
     }
   };
 
