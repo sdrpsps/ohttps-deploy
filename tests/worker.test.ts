@@ -23,6 +23,8 @@ async function run() {
   assert.throws(() => validateCommand("nginx -s reload; rm -rf /"), /metacharacters/);
   const { normalizeFingerprint } = await import("../app/deployer/ssh-deployer");
   assert.equal(normalizeFingerprint("SHA256:MsB48clb9+ArTrw8In3WYXa2nA6NrouWVH7TC4dTxFU"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
+  assert.equal(normalizeFingerprint("256 SHA256:MsB48clb9+ArTrw8In3WYXa2nA6NrouWVH7TC4dTxFU host (ED25519)"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
+  assert.equal(normalizeFingerprint("MsB48clb9+ArTrw8In3WYXa2nA6NrouWVH7TC4dTxFU"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
   assert.equal(normalizeFingerprint("32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
   assert.equal(normalizeFingerprint(""), "");
   const fakeClient = {

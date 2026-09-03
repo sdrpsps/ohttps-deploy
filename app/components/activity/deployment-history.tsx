@@ -60,12 +60,17 @@ export function DeploymentHistory({
 }: DeploymentHistoryProps) {
   const filteredDeployments = deployments.filter((item) => {
     if (certificateId && item.certificateId !== certificateId) return false;
+    if (serverId && !item.serverIds?.includes(serverId)) return false;
     if (status && status !== "all") {
       if (status === "failed") {
         if (item.status !== "failed" && item.status !== "partial") return false;
       } else if (item.status !== status) {
         return false;
       }
+    }
+    if (from) {
+      const fromDate = new Date(`${from}T00:00:00`);
+      if (new Date(item.createdAt) < fromDate) return false;
     }
     return true;
   });

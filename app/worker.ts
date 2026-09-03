@@ -14,6 +14,7 @@ import { postWebhook, type WebhookEvent } from "./domain/webhook";
 import { certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
 import { SSHDeployer } from "./deployer";
 import { ensureAdmin } from "./lib/auth";
+import { runMigrations } from "./db/migrate";
 import { WorkerLease } from "./worker/lease";
 import { enqueueSyncJob } from "./worker/sync-jobs";
 import { reserveOhttpsCall } from "./worker/daily-limit";
@@ -171,7 +172,7 @@ async function processSyncJob(jobId: string) {
     await db.update(certificates).set({ currentVersionId: versionId, expiresAt: stored.notAfter, lastCheckedAt: now, lastSyncAt: now, updatedAt: now }).where(eq(certificates.id, certificate.id));
     await markSyncedCurrentVersion(certificate.id, stored.fingerprint);
     await progress("deploying", "新版本已保存，正在按部署策略创建部署任务");
-    await createAutoDeployment(certificate.id, versionId);
+    await createAutoDeployment(certificate.id, versionId, jobId);
     await queueNotification("certificate.synced", "certificate", certificate.id, "success");
     await progress("succeeded", "同步完成；如有已勾选的部署服务器，将在部署任务中继续执行");
     await finishSyncJob(jobId, "succeeded");
@@ -188,12 +189,12 @@ async function finishSyncJob(id: string, status: "succeeded" | "failed" | "cance
   await db.update(certificateSyncJobs).set({ status, phase: status, errorSummary: errorSummary ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(certificateSyncJobs.id, id));
 }
 
-async function createAutoDeployment(certificateId: string, certificateVersionId: string) {
+async function createAutoDeployment(certificateId: string, certificateVersionId: string, syncJobId?: string) {
   const targets = await db.select({ serverId: servers.id }).from(certificateTargets).innerJoin(servers, eq(certificateTargets.serverId, servers.id))
     .where(and(eq(certificateTargets.certificateId, certificateId), eq(certificateTargets.autoDeploy, true), eq(servers.enabled, true)));
   if (!targets.length) return;
   const deploymentId = randomUUID();
-  await db.insert(deployments).values({ id: deploymentId, certificateId, certificateVersionId, trigger: "scheduled" });
+  await db.insert(deployments).values({ id: deploymentId, certificateId, certificateVersionId, syncJobId, trigger: "scheduled" });
   await db.insert(deploymentTargets).values(targets.map(({ serverId }: { serverId: string }) => ({ id: randomUUID(), deploymentId, serverId })));
 }
 
@@ -292,6 +293,11 @@ async function deliverPendingNotifications() {
 }
 
 async function run() {
+  try {
+    await runMigrations();
+  } catch (error) {
+    logger.error("database migration failed", { error: String(error) });
+  }
   try {
     const password = await ensureAdmin();
     logger.info("worker started");

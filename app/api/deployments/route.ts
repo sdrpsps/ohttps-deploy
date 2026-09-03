@@ -22,9 +22,25 @@ export async function GET(request: Request) {
   const certificateId = search.get("certificateId"); const serverId = search.get("serverId");
   const matching = serverId ? await db.select({ id: deploymentTargets.deploymentId }).from(deploymentTargets).where(eq(deploymentTargets.serverId, serverId)) : [];
   const conditions = [certificateId ? eq(deployments.certificateId, certificateId) : undefined, serverId ? inArray(deployments.id, matching.map((row: { id: string }) => row.id)) : undefined].filter(Boolean);
-  const rows = await db.select({ id: deployments.id, certificateId: deployments.certificateId, certificateVersionId: deployments.certificateVersionId, trigger: deployments.trigger, status: deployments.status, failurePolicy: deployments.failurePolicy, concurrency: deployments.concurrency, dryRun: deployments.dryRun, startedAt: deployments.startedAt, finishedAt: deployments.finishedAt, errorSummary: deployments.errorSummary, createdAt: deployments.createdAt, certificateName: certificates.name, domain: certificates.domain })
+  const rows = await db.select({ id: deployments.id, certificateId: deployments.certificateId, certificateVersionId: deployments.certificateVersionId, syncJobId: deployments.syncJobId, trigger: deployments.trigger, status: deployments.status, failurePolicy: deployments.failurePolicy, concurrency: deployments.concurrency, dryRun: deployments.dryRun, startedAt: deployments.startedAt, finishedAt: deployments.finishedAt, errorSummary: deployments.errorSummary, createdAt: deployments.createdAt, certificateName: certificates.name, domain: certificates.domain })
     .from(deployments).innerJoin(certificates, eq(deployments.certificateId, certificates.id)).where(conditions.length ? and(...conditions as Parameters<typeof and>) : undefined).orderBy(desc(deployments.createdAt)).limit(100);
-  return NextResponse.json({ data: rows });
+  const deploymentIds = rows.map((r: { id: string }) => r.id);
+  const targetRows = deploymentIds.length > 0
+    ? await db.select({ deploymentId: deploymentTargets.deploymentId, serverId: deploymentTargets.serverId })
+        .from(deploymentTargets)
+        .where(inArray(deploymentTargets.deploymentId, deploymentIds))
+    : [];
+  const serverIdsMap = new Map<string, string[]>();
+  for (const t of targetRows) {
+    const list = serverIdsMap.get(t.deploymentId) ?? [];
+    list.push(t.serverId);
+    serverIdsMap.set(t.deploymentId, list);
+  }
+  const data = rows.map((row: typeof rows[number]) => ({
+    ...row,
+    serverIds: serverIdsMap.get(row.id) ?? [],
+  }));
+  return NextResponse.json({ data });
 }
 
 export async function POST(request: Request) {

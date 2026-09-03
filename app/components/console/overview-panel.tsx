@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   ArrowUpRight,
   CheckCircle2,
   Clock3,
@@ -67,17 +68,17 @@ export function OverviewPanel({
       style: metricStyles.expiring,
     },
     {
-      label: "在线服务器",
+      label: "受管服务器",
       value: `${enabledServers}/${servers.length}`,
-      detail: "连接配置",
+      detail: `${enabledServers} 个节点已启用`,
       icon: Server,
       style: metricStyles.servers,
     },
     {
       label: "系统状态",
-      value: "正常",
+      value: workerOnline ? "正常" : "异常",
       detail: workerOnline ? "Worker 运行中" : "Worker 离线",
-      icon: CheckCircle2,
+      icon: workerOnline ? CheckCircle2 : AlertCircle,
       style: workerOnline ? metricStyles.worker : metricStyles.expiring,
     },
   ];

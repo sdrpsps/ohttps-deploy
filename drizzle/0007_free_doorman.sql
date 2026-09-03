@@ -1,0 +1,1 @@
+ALTER TABLE `deployments` ADD `sync_job_id` text REFERENCES certificate_sync_jobs(id);

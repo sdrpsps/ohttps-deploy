@@ -8,6 +8,8 @@ export type Deployment = {
   createdAt: string;
   finishedAt: string | null;
   errorSummary: string | null;
+  syncJobId?: string | null;
+  serverIds?: string[];
 };
 
 export type LogEntry = {

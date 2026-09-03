@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { Control, useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,13 +21,15 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import type { Certificate } from "./types";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { Certificate, ManagedServer } from "./types";
 
 const certificateSchema = z.object({
   name: z.string().min(1, "请输入名称"),
   domain: z.string().regex(/^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i, "请输入有效域名"),
   ohttpsCertificateId: z.string().min(1, "请输入证书 ID"),
   renewBeforeDays: z.coerce.number().int().min(1).max(365),
+  serverIds: z.array(z.string()),
 });
 
 type CertificateForm = z.infer<typeof certificateSchema>;
@@ -36,6 +38,8 @@ type CertificateFormDialogProps = {
   certificate: Certificate | null;
   open: boolean;
   busy: boolean;
+  servers?: ManagedServer[];
+  existingServerIds?: string[];
   onOpenChange: (open: boolean) => void;
   onSave: (values: CertificateForm, certificate: Certificate | null) => Promise<boolean>;
 };
@@ -44,6 +48,8 @@ export function CertificateFormDialog({
   certificate,
   open,
   busy,
+  servers = [],
+  existingServerIds = [],
   onOpenChange,
   onSave,
 }: CertificateFormDialogProps) {
@@ -53,8 +59,8 @@ export function CertificateFormDialog({
   });
 
   useEffect(() => {
-    form.reset(certificate ? toFormValues(certificate) : emptyCertificateForm);
-  }, [certificate, form, open]);
+    form.reset(certificate ? toFormValues(certificate, existingServerIds) : { ...emptyCertificateForm, serverIds: existingServerIds });
+  }, [certificate, existingServerIds, form, open]);
 
   async function submit(values: CertificateForm) {
     if (await onSave(values, certificate)) onOpenChange(false);
@@ -62,11 +68,11 @@ export function CertificateFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{certificate ? "编辑证书" : "添加证书"}</DialogTitle>
           <DialogDescription>
-            {certificate ? "修改证书配置，不会覆盖已缓存的证书版本。" : "接入 ohttps 证书并设置续期提醒"}
+            {certificate ? "修改证书配置与自动部署目标服务器。" : "接入 ohttps 证书并绑定自动部署的目标服务器"}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -93,6 +99,75 @@ export function CertificateFormDialog({
                 </FormItem>
               )}
             />
+
+            {servers.length > 0 ? (
+              <div className="space-y-2 rounded-lg border p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <FormLabel className="text-sm font-medium">自动部署目标服务器（可选）</FormLabel>
+                    <p className="text-xs text-muted-foreground">新证书获取后将自动推送至已勾选的服务器并执行重载。</p>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => form.setValue("serverIds", [], { shouldDirty: true })}
+                    >
+                      取消全选
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-1.5 text-xs"
+                      onClick={() =>
+                        form.setValue(
+                          "serverIds",
+                          servers.filter((s) => s.enabled).map((s) => s.id),
+                          { shouldDirty: true }
+                        )
+                      }
+                    >
+                      全选已启用
+                    </Button>
+                  </div>
+                </div>
+                <div className="max-h-36 space-y-2 overflow-y-auto pt-1">
+                  {servers.map((server) => {
+                    const checked = (form.watch("serverIds") || []).includes(server.id);
+                    return (
+                      <div key={server.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`cert-server-${server.id}`}
+                          checked={checked}
+                          disabled={!server.enabled}
+                          onCheckedChange={(isChecked) => {
+                            const cur = form.getValues("serverIds") || [];
+                            const next = isChecked ? [...cur, server.id] : cur.filter((id) => id !== server.id);
+                            form.setValue("serverIds", next, { shouldDirty: true });
+                          }}
+                        />
+                        <label
+                          htmlFor={`cert-server-${server.id}`}
+                          className={`text-xs cursor-pointer ${!server.enabled ? "text-muted-foreground line-through" : ""}`}
+                        >
+                          <span className="font-medium">{server.name}</span>
+                          <span className="ml-1.5 font-mono text-muted-foreground">({server.host}:{server.port})</span>
+                          {!server.enabled && " [已停用]"}
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                暂无部署服务器。保存证书后可在「服务器」中添加目标主机，或在「部署策略」中随时关联。
+              </div>
+            )}
+
             <Button className="w-full" disabled={busy}>
               {busy ? "保存中..." : certificate ? "保存修改" : "创建证书"}
             </Button>
@@ -109,7 +184,7 @@ function TextField({
   label,
   placeholder,
 }: {
-  control: ReturnType<typeof useForm<CertificateForm>>["control"];
+  control: Control<CertificateForm>;
   name: "name" | "domain" | "ohttpsCertificateId";
   label: string;
   placeholder: string;
@@ -136,13 +211,15 @@ const emptyCertificateForm: CertificateForm = {
   domain: "",
   ohttpsCertificateId: "",
   renewBeforeDays: 20,
+  serverIds: [],
 };
 
-function toFormValues(certificate: Certificate): CertificateForm {
+function toFormValues(certificate: Certificate, serverIds: string[] = []): CertificateForm {
   return {
     name: certificate.name,
     domain: certificate.domain,
     ohttpsCertificateId: certificate.ohttpsCertificateId,
     renewBeforeDays: certificate.renewBeforeDays,
+    serverIds,
   };
 }

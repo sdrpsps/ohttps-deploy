@@ -149,12 +149,16 @@ export class SSHDeployer implements Deployer {
 
 export function normalizeFingerprint(fp?: string | null): string {
   if (!fp) return "";
-  const clean = fp.trim();
+  let clean = fp.trim();
+  const shaMatch = clean.match(/SHA256:([A-Za-z0-9+/=]+)/i);
+  if (shaMatch) {
+    clean = shaMatch[1];
+  } else {
+    clean = clean.replace(/^SHA256:/i, "").trim();
+  }
   if (/^[0-9a-fA-F]{64}$/.test(clean)) return clean.toLowerCase();
-  const withoutPrefix = clean.replace(/^SHA256:/i, "").replace(/^sha256:/i, "").trim();
-  if (/^[0-9a-fA-F]{64}$/.test(withoutPrefix)) return withoutPrefix.toLowerCase();
   try {
-    const buf = Buffer.from(withoutPrefix, "base64");
+    const buf = Buffer.from(clean, "base64");
     if (buf.length === 32) return buf.toString("hex").toLowerCase();
   } catch {}
   return clean.toLowerCase();

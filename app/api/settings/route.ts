@@ -20,7 +20,13 @@ const schema = z.object({
   logRetentionDays: z.coerce.number().int().min(1).max(3_650),
 });
 
-const secretKeys = new Set(["ohttps_api_id", "ohttps_api_key", "webhook_secret"]);
+const secretKeys = new Set(["ohttps_api_key", "webhook_secret"]);
+
+function maskSecret(secret: string): string {
+  if (!secret) return "";
+  if (secret.length <= 8) return "••••••••";
+  return `${secret.slice(0, 4)}••••••••${secret.slice(-4)}`;
+}
 
 async function saveSetting(key: string, value: string) {
   await db.insert(settings).values({ key, value, isSecret: secretKeys.has(key), updatedAt: new Date() })
@@ -39,6 +45,8 @@ export async function GET() {
     schedulerIntervalMinutes: value.schedulerIntervalMinutes,
     logRetentionDays: value.logRetentionDays,
     webhookUrl: value.webhookUrl,
+    ohttpsApiId: value.ohttpsApiId,
+    ohttpsApiKeyMasked: maskSecret(value.ohttpsApiKey),
     ohttpsConfigured: Boolean(value.ohttpsApiId && value.ohttpsApiKey),
     webhookSecretConfigured: Boolean(value.webhookSecret),
     sharedSshPrivateKeyConfigured: Boolean(ssh[0]),

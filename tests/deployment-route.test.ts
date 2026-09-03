@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 async function run() {
   process.env.DATABASE_URL = ":memory:";
-  const [{ migrate }, { db }, { certificateTargets, certificates, certificateVersions, deploymentTargets, servers }, { POST }] = await Promise.all([
+  const [{ migrate }, { db }, { certificateTargets, certificates, certificateVersions, deploymentTargets, servers }, { GET, POST }] = await Promise.all([
     import("drizzle-orm/libsql/migrator"), import("../app/db"), import("../app/db/schema"), import("../app/api/deployments/route"),
   ]);
   await migrate(db, { migrationsFolder: "./drizzle" });
@@ -19,6 +19,17 @@ async function run() {
   assert.equal(response.status, 202);
   assert.equal((await response.json()).data.targetCount, 1);
   assert.deepEqual((await db.select({ serverId: deploymentTargets.serverId }).from(deploymentTargets)).map((row) => row.serverId), ["mapped"]);
+
+  const getRes = await GET(new Request("http://localhost/api/deployments"));
+  const getJson = await getRes.json();
+  assert.equal(getJson.data.length, 1);
+  assert.deepEqual(getJson.data[0].serverIds, ["mapped"]);
+
+  const filterMatch = await GET(new Request("http://localhost/api/deployments?serverId=mapped"));
+  assert.equal((await filterMatch.json()).data.length, 1);
+  const filterMismatch = await GET(new Request("http://localhost/api/deployments?serverId=unmapped"));
+  assert.equal((await filterMismatch.json()).data.length, 0);
+
   const noVersion = await POST(new Request("http://localhost/api/deployments", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ certificateId: "certificate-2" }) }));
   assert.equal(noVersion.status, 409);
   console.log("deployment route tests passed");

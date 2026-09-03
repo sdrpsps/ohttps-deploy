@@ -15,10 +15,11 @@ type DeploymentDetailPanelProps = {
   deployment: DeploymentDetail;
   onClose: () => void;
   onAction?: (id: string, action: "retry" | "cancel") => void;
+  onViewSyncJob?: (jobId: string) => void;
   busy?: boolean;
 };
 
-export function DeploymentDetailPanel({ deployment, onClose, onAction, busy = false }: DeploymentDetailPanelProps) {
+export function DeploymentDetailPanel({ deployment, onClose, onAction, onViewSyncJob, busy = false }: DeploymentDetailPanelProps) {
   const isTerminal = terminalStatuses.has(deployment.status);
 
   return (
@@ -62,6 +63,16 @@ export function DeploymentDetailPanel({ deployment, onClose, onAction, busy = fa
               <span className="text-xs text-muted-foreground">
                 结束于：{formatActivityDate(deployment.finishedAt)}
               </span>
+            )}
+            {deployment.syncJobId && (
+              <Button
+                variant="link"
+                size="sm"
+                className="h-auto p-0 text-xs text-primary underline"
+                onClick={() => onViewSyncJob?.(deployment.syncJobId!)}
+              >
+                关联同步任务：{deployment.syncJobId.slice(0, 8)}…
+              </Button>
             )}
           </div>
           <div className="grid gap-3 text-sm sm:grid-cols-3">

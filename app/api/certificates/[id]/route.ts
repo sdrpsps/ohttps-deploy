@@ -1,8 +1,8 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
-import { certificateTargets, certificateVersions, certificates, deployments } from "@/db/schema";
+import { certificateTargets, certificateVersions, certificates, deployments, servers, settings } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
 import { isCertificateDomain } from "@/domain/deployment-path";
 
@@ -14,6 +14,7 @@ const patchSchema = z.object({
   domain: z.string().trim().min(1).max(253).refine(isCertificateDomain, "invalid certificate domain").optional(),
   renewBeforeDays: z.coerce.number().int().min(1).max(365).optional(),
   status: z.enum(["active", "disabled"]).optional(),
+  serverIds: z.array(z.string().min(1)).optional(),
 }).strict();
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -27,8 +28,28 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const { id } = await context.params;
   const parsed = patchSchema.safeParse(await request.json().catch(() => undefined));
   if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "invalid certificate fields" } }, { status: 400 });
-  const [row] = await db.update(certificates).set({ ...parsed.data, updatedAt: new Date() }).where(eq(certificates.id, id)).returning();
+  const { serverIds, ...certUpdates } = parsed.data;
+
+  if (serverIds !== undefined && serverIds.length > 0) {
+    const uniqueIds = [...new Set(serverIds)];
+    const existing = await db.select({ id: servers.id }).from(servers).where(inArray(servers.id, uniqueIds));
+    if (existing.length !== uniqueIds.length) {
+      return NextResponse.json({ error: { code: "INVALID_INPUT", message: "selected server is unavailable" } }, { status: 400 });
+    }
+  }
+
+  const [row] = Object.keys(certUpdates).length > 0
+    ? await db.update(certificates).set({ ...certUpdates, updatedAt: new Date() }).where(eq(certificates.id, id)).returning()
+    : await db.select().from(certificates).where(eq(certificates.id, id)).limit(1);
   if (!row) return NextResponse.json({ error: { code: "NOT_FOUND", message: "certificate not found" } }, { status: 404 });
+  if (serverIds !== undefined) {
+    const uniqueIds = [...new Set(serverIds)];
+    await db.delete(certificateTargets).where(eq(certificateTargets.certificateId, id));
+    if (uniqueIds.length > 0) {
+      await db.insert(certificateTargets).values(uniqueIds.map((serverId) => ({ certificateId: id, serverId, autoDeploy: true })));
+    }
+    await db.insert(settings).values({ key: `deployment_policy_configured_${id}`, value: "1" }).onConflictDoUpdate({ target: settings.key, set: { value: "1", updatedAt: new Date() } });
+  }
   await recordAudit("certificate.updated", "certificate", id);
   return NextResponse.json({ data: row });
 }

@@ -29,7 +29,6 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
 
   function currentSelection(certificateId: string) {
     const existing = data.policies.filter((policy) => policy.certificateId === certificateId);
-    if (!existing.length && !data.configuredCertificateIds.includes(certificateId)) return new Set(enabledServers.map((server) => server.id));
     return new Set(existing.filter((policy) => policy.autoDeploy && enabledServers.some((server) => server.id === policy.serverId)).map((policy) => policy.serverId));
   }
 
@@ -39,7 +38,12 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
 
   function openEditor(certificate: Certificate) {
     setSelectedCertificate(certificate);
-    setSelectedServerIds(currentSelection(certificate.id));
+    const existing = currentSelection(certificate.id);
+    if (!existing.size && !data.configuredCertificateIds.includes(certificate.id)) {
+      setSelectedServerIds(new Set(enabledServers.map((server) => server.id)));
+    } else {
+      setSelectedServerIds(existing);
+    }
   }
 
   function toggleServer(serverId: string, checked: boolean) {

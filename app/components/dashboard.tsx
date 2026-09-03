@@ -87,16 +87,9 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const settings = settingsQuery.data ?? null;
   const policyCount = useMemo(() => {
     const enabledServerIds = new Set(servers.filter((s) => s.enabled).map((s) => s.id));
-    const configuredSet = new Set(policiesQuery.data?.configuredCertificateIds ?? []);
     const policies = policiesQuery.data?.policies ?? [];
-    return certificates.reduce((sum, cert) => {
-      const existing = policies.filter((p) => p.certificateId === cert.id);
-      if (!existing.length && !configuredSet.has(cert.id)) {
-        return sum + enabledServerIds.size;
-      }
-      return sum + existing.filter((p) => p.autoDeploy && enabledServerIds.has(p.serverId)).length;
-    }, 0);
-  }, [certificates, servers, policiesQuery.data]);
+    return policies.filter((p) => p.autoDeploy && enabledServerIds.has(p.serverId)).length;
+  }, [servers, policiesQuery.data]);
   const workerOnline = Boolean(healthQuery.data?.worker);
 
   const latestDeploymentByCert = useMemo(() => {
@@ -358,10 +351,11 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onTest={(server) => void runAction(`/api/servers/${server.id}/test-connection`, "POST", `${server.name} 连接成功，主机指纹已校验。`)}
         onDelete={setDeleteTarget}
         onToggleEnabled={(server) => void toggleServerEnabled(server)}
+        onViewSshKey={() => setKeyDialogOpen(true)}
       />
     ),
     policies: <PoliciesPanel certificates={certificates} servers={servers} />,
-    activity: <ActivityPanel certificates={certificates} servers={servers} />,
+    activity: <ActivityPanel certificates={certificates} servers={servers} onViewSyncJob={openSyncTask} />,
     notifications: <NotificationPanel />,
   } satisfies Record<DashboardSection, React.ReactNode>;
 
@@ -392,16 +386,30 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         certificate={editingCertificate}
         open={certificateDialogOpen}
         busy={busy}
+        servers={servers}
+        existingServerIds={
+          editingCertificate
+            ? (policiesQuery.data?.policies ?? [])
+                .filter((p) => p.certificateId === editingCertificate.id && p.autoDeploy)
+                .map((p) => p.serverId)
+            : []
+        }
         onOpenChange={(open) => {
           setCertificateDialogOpen(open);
           if (!open) setEditingCertificate(null);
         }}
-        onSave={(values, certificate) => save(
-          certificate ? `/api/certificates/${certificate.id}` : "/api/certificates",
-          values,
-          certificate ? "证书已更新" : "证书已创建",
-          certificate ? "PATCH" : "POST",
-        )}
+        onSave={async (values, certificate) => {
+          const ok = await save(
+            certificate ? `/api/certificates/${certificate.id}` : "/api/certificates",
+            values,
+            certificate ? "证书已更新" : "证书已创建",
+            certificate ? "PATCH" : "POST",
+          );
+          if (ok) {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.policies });
+          }
+          return ok;
+        }}
       />
 
       <ServerFormDialog

@@ -63,6 +63,7 @@ export const deployments = sqliteTable("deployments", {
   id: text("id").primaryKey(),
   certificateId: text("certificate_id").notNull().references(() => certificates.id),
   certificateVersionId: text("certificate_version_id").notNull().references(() => certificateVersions.id),
+  syncJobId: text("sync_job_id").references(() => certificateSyncJobs.id),
   trigger: text("trigger", { enum: ["manual", "scheduled", "refresh", "retry"] }).notNull(),
   status: text("status", { enum: ["queued", "running", "succeeded", "failed", "cancelled", "partial"] }).notNull().default("queued"),
   failurePolicy: text("failure_policy", { enum: ["all_success", "allow_partial"] }).notNull().default("all_success"),

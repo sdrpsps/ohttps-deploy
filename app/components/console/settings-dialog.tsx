@@ -15,24 +15,57 @@ const schema = z.object({
 });
 type SettingsForm = z.infer<typeof schema>;
 
-export type SettingsSummary = Omit<SettingsForm, "ohttpsApiId" | "ohttpsApiKey" | "webhookSecret"> & { ohttpsConfigured: boolean; webhookSecretConfigured: boolean; sharedSshPrivateKeyConfigured: boolean };
+export type SettingsSummary = Omit<SettingsForm, "ohttpsApiKey" | "webhookSecret"> & {
+  ohttpsApiId?: string;
+  ohttpsApiKeyMasked?: string;
+  ohttpsConfigured: boolean;
+  webhookSecretConfigured: boolean;
+  sharedSshPrivateKeyConfigured: boolean;
+};
 
 type Props = { open: boolean; busy: boolean; settings: SettingsSummary | null; onOpenChange: (open: boolean) => void; onSave: (value: SettingsForm) => Promise<boolean>; onConfigureSshKey: () => void; onChangePassword: () => void };
 
 export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onConfigureSshKey, onChangePassword }: Props) {
   const form = useForm<SettingsForm>({ resolver: zodResolver(schema), defaultValues: defaults });
-  useEffect(() => { if (open) form.reset({ ...defaults, ...settings, ohttpsApiId: "", ohttpsApiKey: "", webhookSecret: "" }); }, [form, open, settings]);
+  useEffect(() => {
+    if (open) {
+      form.reset({
+        ...defaults,
+        ...settings,
+        ohttpsApiId: settings?.ohttpsApiId ?? "",
+        ohttpsApiKey: "",
+        webhookSecret: "",
+      });
+    }
+  }, [form, open, settings]);
   async function submit(value: SettingsForm) { if (await onSave(value)) onOpenChange(false); }
   const secretHint = (configured: boolean) => configured ? "已配置；留空则保持不变。" : "尚未配置。";
+  const intervalSeconds = form.watch("ohttpsMinIntervalSeconds");
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader><DialogTitle>系统设置</DialogTitle><DialogDescription>凭据仅保存到受保护的 SQLite 数据库，界面和 API 不会返回其内容。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>系统设置</DialogTitle><DialogDescription>凭据保存于受保护的 SQLite 数据库，API ID 支持回显，API Key 仅支持掩码展示以防泄密。</DialogDescription></DialogHeader>
         <Form {...form}>
           <form className="space-y-6" onSubmit={form.handleSubmit(submit)}>
-            <section className="space-y-3 rounded-lg border p-4"><div><h3 className="text-sm font-semibold">ohttps 凭据</h3><p className="text-xs text-muted-foreground">用于拉取证书；留空不会覆盖已保存的密钥。</p></div>
+            <section className="space-y-3 rounded-lg border p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">ohttps 凭据</h3>
+                  <p className="text-xs text-muted-foreground">用于自动同步证书；留空不会覆盖已保存的密钥。</p>
+                </div>
+                {settings?.ohttpsConfigured && (
+                  <span className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary font-medium">已生效</span>
+                )}
+              </div>
               <TextField control={form.control} name="ohttpsApiId" label="API ID" placeholder={secretHint(settings?.ohttpsConfigured ?? false)} />
-              <TextField control={form.control} name="ohttpsApiKey" label="API Key" type="password" placeholder={secretHint(settings?.ohttpsConfigured ?? false)} />
+              <TextField
+                control={form.control}
+                name="ohttpsApiKey"
+                label={settings?.ohttpsApiKeyMasked ? `API Key (当前已保存：${settings.ohttpsApiKeyMasked})` : "API Key"}
+                type="password"
+                placeholder={settings?.ohttpsApiKeyMasked ? `已配置 (${settings.ohttpsApiKeyMasked})；留空则保持不变` : secretHint(false)}
+              />
             </section>
             <section className="space-y-3 rounded-lg border p-4"><div><h3 className="text-sm font-semibold">Webhook 通知</h3><p className="text-xs text-muted-foreground">部署、同步和过期事件会以签名 JSON 投递。</p></div>
               <TextField control={form.control} name="webhookUrl" label="Webhook URL" placeholder="https://example.com/ssl-events；留空则停用通知" />
@@ -40,20 +73,58 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onC
             </section>
             <section className="grid gap-3 rounded-lg border p-4 sm:grid-cols-2"><div className="col-span-full"><h3 className="text-sm font-semibold">调度与续期</h3><p className="text-xs text-muted-foreground">控制本地扫描频率、续期窗口和 API 调用保护。</p></div>
               <TextField control={form.control} name="renewBeforeDays" label="默认续期天数" type="number" />
-              <TextField control={form.control} name="ohttpsMinIntervalSeconds" label="API 最小间隔（秒）" type="number" />
+              <div className="space-y-1">
+                <TextField control={form.control} name="ohttpsMinIntervalSeconds" label="API 最小间隔（秒）" type="number" />
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <span className="text-xs text-muted-foreground">
+                    换算：{formatSecondsFriendly(intervalSeconds)}
+                  </span>
+                  <div className="flex gap-1 text-xs">
+                    <button
+                      type="button"
+                      className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => form.setValue("ohttpsMinIntervalSeconds", 86400, { shouldValidate: true, shouldDirty: true })}
+                    >
+                      24小时
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => form.setValue("ohttpsMinIntervalSeconds", 43200, { shouldValidate: true, shouldDirty: true })}
+                    >
+                      12小时
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => form.setValue("ohttpsMinIntervalSeconds", 3600, { shouldValidate: true, shouldDirty: true })}
+                    >
+                      1小时
+                    </button>
+                  </div>
+                </div>
+              </div>
               <TextField control={form.control} name="ohttpsDailyCallLimit" label="每日 API 调用上限" type="number" />
               <TextField control={form.control} name="schedulerIntervalMinutes" label="扫描频率（分钟）" type="number" />
               <TextField control={form.control} name="logRetentionDays" label="日志保留天数" type="number" />
             </section>
-            <section className="flex items-center justify-between rounded-lg border p-4"><div><p className="text-sm font-semibold">SSH 部署凭据</p><p className="mt-1 text-xs text-muted-foreground">所有服务器共用一把私钥，数据库文件需限制访问权限。</p><p className="mt-1 text-xs">{settings?.sharedSshPrivateKeyConfigured ? "已配置" : "尚未配置"}</p></div><Button type="button" variant="outline" onClick={onConfigureSshKey}>配置私钥</Button></section>
-            <section className="rounded-lg border p-4"><h3 className="text-sm font-semibold">日志与保留策略</h3><p className="mt-1 text-xs text-muted-foreground">日志自动清理前请先完成归档或确认。</p></section>
-            <section className="flex items-center justify-between gap-4 rounded-lg border p-4"><div><h3 className="text-sm font-semibold">管理员安全</h3><p className="mt-1 text-xs text-muted-foreground">管理员密码仅用于登录，不会出现在 API 响应或业务日志中。</p></div><Button type="button" variant="outline" onClick={onChangePassword}>修改密码</Button></section>
+            <section className="flex items-center justify-between rounded-lg border p-4"><div><p className="text-sm font-semibold">SSH 部署凭据</p><p className="mt-1 text-xs text-muted-foreground">所有服务器共用一把私钥，数据库文件需限制访问权限。</p><p className="mt-1 text-xs">{settings?.sharedSshPrivateKeyConfigured ? "已配置" : "尚未配置"}</p></div><Button type="button" variant="outline" onClick={() => { onOpenChange(false); onConfigureSshKey(); }}>配置私钥</Button></section>
+            <section className="flex items-center justify-between gap-4 rounded-lg border p-4"><div><h3 className="text-sm font-semibold">管理员安全</h3><p className="mt-1 text-xs text-muted-foreground">管理员密码仅用于登录，不会出现在 API 响应或业务日志中。</p></div><Button type="button" variant="outline" onClick={() => { onOpenChange(false); onChangePassword(); }}>修改密码</Button></section>
             <Button className="w-full" disabled={busy}>{busy ? "保存中..." : "保存设置"}</Button>
           </form>
         </Form>
       </DialogContent>
     </Dialog>
   );
+}
+
+function formatSecondsFriendly(seconds: number): string {
+  if (!seconds || seconds <= 0) return "-";
+  if (seconds % 86400 === 0) return `${seconds / 86400} 天`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} 小时`;
+  if (seconds % 60 === 0) return `${seconds / 60} 分钟`;
+  if (seconds >= 3600) return `约 ${(seconds / 3600).toFixed(1)} 小时`;
+  return `${seconds} 秒`;
 }
 
 function TextField({ control, name, label, type = "text", placeholder }: { control: ReturnType<typeof useForm<SettingsForm>>["control"]; name: keyof SettingsForm; label: string; type?: string; placeholder?: string }) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Fingerprint, LoaderCircle } from "lucide-react";
+import { Copy, Fingerprint, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Control, useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -121,21 +121,62 @@ export function ServerFormDialog({
             <FormField
               control={form.control}
               name="hostFingerprint"
-              render={({ field }) => (
-                <FormItem>
-                  <div className="flex items-center justify-between gap-3">
-                    <FormLabel>主机指纹</FormLabel>
-                    <Button type="button" variant="outline" size="sm" disabled={busy || fetchingFingerprint} onClick={() => void fetchFingerprint()}>
-                      {fetchingFingerprint ? <LoaderCircle className="animate-spin" /> : <Fingerprint />}
-                      {fetchingFingerprint ? "获取中..." : server ? "重新获取" : "获取指纹"}
-                    </Button>
-                  </div>
-                  <FormControl>
-                    <Input placeholder="填写主机和端口后获取" readOnly {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              render={({ field }) => {
+                const currentHost = form.watch("host") || "<host>";
+                const currentPort = form.watch("port") || 22;
+                const keyscanCmd = `ssh-keyscan -p ${currentPort} -t ed25519,ecdsa,rsa ${currentHost} 2>/dev/null | ssh-keygen -lf -`;
+                return (
+                  <FormItem>
+                    <div className="flex items-center justify-between gap-3">
+                      <FormLabel>主机指纹</FormLabel>
+                      <Button type="button" variant="outline" size="sm" disabled={busy || fetchingFingerprint} onClick={() => void fetchFingerprint()}>
+                        {fetchingFingerprint ? <LoaderCircle className="animate-spin" /> : <Fingerprint />}
+                        {fetchingFingerprint ? "获取中..." : server ? "重新获取" : "获取指纹"}
+                      </Button>
+                    </div>
+                    <FormControl>
+                      <Input
+                        placeholder="SHA256:...（可点击按钮获取或手动粘贴）"
+                        {...field}
+                        onChange={(event) => {
+                          const raw = event.target.value;
+                          const shaMatch = raw.match(/SHA256:[A-Za-z0-9+/=]+/i);
+                          field.onChange(shaMatch ? shaMatch[0] : raw.trim());
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                    <details className="mt-1 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer hover:text-foreground">
+                        自动获取失败？查看手动获取指纹命令
+                      </summary>
+                      <div className="mt-1.5 rounded-md bg-muted p-2.5">
+                        <p className="mb-1.5 text-[11px] text-muted-foreground">
+                          在任意终端执行以下命令，将输出中的 SHA256 指纹（如 <code>SHA256:xxx...</code>）填入上方：
+                        </p>
+                        <div className="flex items-center justify-between gap-2">
+                          <code className="block flex-1 break-all font-mono text-[11px] text-foreground">
+                            {keyscanCmd}
+                          </code>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 shrink-0 px-2 text-xs"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(keyscanCmd);
+                              toast.success("keyscan 命令已复制到剪贴板");
+                            }}
+                          >
+                            <Copy className="mr-1 size-3" />
+                            复制
+                          </Button>
+                        </div>
+                      </div>
+                    </details>
+                  </FormItem>
+                );
+              }}
             />
             <FormField
               control={form.control}

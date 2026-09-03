@@ -14,9 +14,10 @@ import { getApiData, queryKeys } from "@/lib/api";
 type ActivityPanelProps = {
   certificates: Certificate[];
   servers: ManagedServer[];
+  onViewSyncJob?: (jobId: string) => void;
 };
 
-export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
+export function ActivityPanel({ certificates, servers, onViewSyncJob }: ActivityPanelProps) {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [certificateId, setCertificateId] = useState("");
@@ -123,6 +124,7 @@ export function ActivityPanel({ certificates, servers }: ActivityPanelProps) {
           deployment={selected}
           onClose={() => setSelectedId(null)}
           onAction={(id, name) => void action(id, name)}
+          onViewSyncJob={onViewSyncJob}
           busy={busy}
         />
       )}

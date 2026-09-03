@@ -1,5 +1,5 @@
 "use client";
-import { Pencil, Plus, RefreshCw, Send, Trash2 } from "lucide-react";
+import { Activity, FileCode, MoreHorizontal, Pencil, Plus, RefreshCw, Send, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,13 @@ import {
 } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Table,
   TableBody,
   TableCell,
@@ -20,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { daysUntil, formatDate } from "@/lib/utils";
+import { NginxConfigDialog } from "./nginx-config-dialog";
 import type { Certificate, DeleteTarget } from "./types";
 
 type CertificatePanelProps = {
@@ -52,6 +60,8 @@ export function CertificatePanel({
   onConfigureSettings,
 }: CertificatePanelProps) {
   const [confirming, setConfirming] = useState<Certificate | null>(null);
+  const [nginxConfigCert, setNginxConfigCert] = useState<Certificate | null>(null);
+
   return (
     <div className="space-y-6"><Card>
       <CardHeader className="flex-row items-start justify-between gap-4">
@@ -93,6 +103,7 @@ export function CertificatePanel({
                   onConfigureSettings={onConfigureSettings}
                   onConfirmRefresh={setConfirming}
                   onDeploy={onDeploy}
+                  onViewNginxConfig={setNginxConfigCert}
                 />
               ))
             )}
@@ -105,6 +116,7 @@ export function CertificatePanel({
       <CardContent><Table><TableHeader><TableRow><TableHead>证书</TableHead><TableHead>触发</TableHead><TableHead>状态</TableHead><TableHead>时间</TableHead><TableHead>错误</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{jobs.map((job) => <TableRow key={job.id}><TableCell>{job.certificateName}</TableCell><TableCell>{job.trigger === "manual" ? "手动" : "定时"}</TableCell><TableCell><Badge variant={job.status === "succeeded" ? "default" : job.status === "failed" ? "destructive" : "secondary"}>{({ queued: "排队中", running: "同步中", succeeded: "成功", failed: "失败", cancelled: "已取消" } as Record<string, string>)[job.status] ?? job.status}</Badge></TableCell><TableCell>{formatDate(job.createdAt)}</TableCell><TableCell className="text-xs text-destructive">{job.errorSummary ?? "-"}</TableCell><TableCell className="text-right"><Button variant="outline" size="sm" onClick={() => onViewSyncJob(job.id)}>查看</Button></TableCell></TableRow>)}{jobs.length === 0 && <EmptyRow text="暂无同步任务" columns={6} />}</TableBody></Table></CardContent>
     </Card>
       <Dialog open={Boolean(confirming)} onOpenChange={(open) => !open && setConfirming(null)}><DialogContent><DialogHeader><DialogTitle>确认立即同步？</DialogTitle><DialogDescription>将调用 ohttps 获取“{confirming?.name}”的最新证书。该操作可能产生费用，成功后会根据部署策略自动创建部署任务。</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setConfirming(null)}>取消</Button><Button onClick={() => { if (confirming) onRefresh(confirming.id); setConfirming(null); }}>确认同步</Button></DialogFooter></DialogContent></Dialog>
+      <NginxConfigDialog certificate={nginxConfigCert} open={Boolean(nginxConfigCert)} onOpenChange={(open) => !open && setNginxConfigCert(null)} />
     </div>
   );
 }
@@ -120,7 +132,13 @@ function CertificateRow({
   onConfigureSettings,
   onConfirmRefresh,
   onDeploy,
-}: Pick<CertificatePanelProps, "busy" | "onEdit" | "onDelete" | "ohttpsConfigured" | "onConfigureSettings" | "onViewSyncJob" | "onDeploy"> & { certificate: Certificate; latestJob?: { id: string; status: string; errorSummary: string | null } | undefined; onConfirmRefresh: (certificate: Certificate) => void }) {
+  onViewNginxConfig,
+}: Pick<CertificatePanelProps, "busy" | "onEdit" | "onDelete" | "ohttpsConfigured" | "onConfigureSettings" | "onViewSyncJob" | "onDeploy"> & {
+  certificate: Certificate;
+  latestJob?: { id: string; status: string; errorSummary: string | null } | undefined;
+  onConfirmRefresh: (certificate: Certificate) => void;
+  onViewNginxConfig: (certificate: Certificate) => void;
+}) {
   const days = daysUntil(certificate.expiresAt);
   const needsAttention = days !== null && days <= certificate.renewBeforeDays;
   const statusClass = needsAttention && certificate.status === "active"
@@ -131,6 +149,8 @@ function CertificateRow({
 
   const syncInProgress = latestJob?.status === "queued" || latestJob?.status === "running";
   const action = !ohttpsConfigured ? { label: "去配置 ohttps 凭据", onClick: onConfigureSettings } : syncInProgress ? { label: "查看同步", onClick: () => onViewSyncJob(latestJob!.id) } : { label: latestJob?.status === "failed" ? "重新同步" : "立即同步", onClick: () => onConfirmRefresh(certificate) };
+  const canDeploy = Boolean(certificate.currentVersionId && certificate.status === "active");
+
   return (
     <TableRow>
       <TableCell className="font-medium">
@@ -154,24 +174,55 @@ function CertificateRow({
         </Badge>
       </TableCell>
       <TableCell className="text-right">
-        <div className="flex items-center justify-end gap-1">
-          <Button variant="outline" size="sm" disabled={busy} onClick={action.onClick}>
-            <RefreshCw /> {action.label}
-          </Button>
-          {certificate.currentVersionId && certificate.status === "active" && <Button size="sm" disabled={busy} onClick={() => onDeploy(certificate.id)}><Send /> 部署到服务器</Button>}
-          {latestJob && !syncInProgress && <Button variant="ghost" size="sm" onClick={() => onViewSyncJob(latestJob.id)}>查看同步</Button>}
-          <Button variant="ghost" size="icon" disabled={busy} onClick={() => onEdit(certificate)} aria-label={`编辑证书 ${certificate.name}`}>
-            <Pencil className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={busy}
-            onClick={() => onDelete({ type: "certificate", id: certificate.id, name: certificate.name })}
-            aria-label={`删除证书 ${certificate.name}`}
-          >
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
+        <div className="flex items-center justify-end gap-1.5">
+          {canDeploy ? (
+            <Button size="sm" disabled={busy} onClick={() => onDeploy(certificate.id)}>
+              <Send className="mr-1 size-3.5" /> 部署
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" disabled={busy} onClick={action.onClick}>
+              <RefreshCw className="mr-1 size-3.5" /> {action.label}
+            </Button>
+          )}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-8" disabled={busy} aria-label={`操作 ${certificate.name}`}>
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canDeploy && (
+                <DropdownMenuItem disabled={busy} onClick={action.onClick}>
+                  <RefreshCw className="mr-2 size-3.5" /> {action.label}
+                </DropdownMenuItem>
+              )}
+              {!canDeploy && certificate.currentVersionId && (
+                <DropdownMenuItem disabled={busy} onClick={() => onDeploy(certificate.id)}>
+                  <Send className="mr-2 size-3.5" /> 部署到服务器
+                </DropdownMenuItem>
+              )}
+              {latestJob && !syncInProgress && (
+                <DropdownMenuItem onClick={() => onViewSyncJob(latestJob.id)}>
+                  <Activity className="mr-2 size-3.5" /> 查看同步记录
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem onClick={() => onViewNginxConfig(certificate)}>
+                <FileCode className="mr-2 size-3.5" /> Nginx 配置引用
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={busy} onClick={() => onEdit(certificate)}>
+                <Pencil className="mr-2 size-3.5" /> 编辑证书
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                disabled={busy}
+                onClick={() => onDelete({ type: "certificate", id: certificate.id, name: certificate.name })}
+              >
+                <Trash2 className="mr-2 size-3.5" /> 删除证书
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </TableCell>
     </TableRow>

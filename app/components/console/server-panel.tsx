@@ -1,6 +1,6 @@
-import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Key, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
@@ -27,6 +27,7 @@ type ServerPanelProps = {
   onTest: (server: ManagedServer) => void;
   onDelete: (target: DeleteTarget) => void;
   onToggleEnabled?: (server: ManagedServer) => void;
+  onViewSshKey?: () => void;
 };
 
 export function ServerPanel({
@@ -38,6 +39,7 @@ export function ServerPanel({
   onTest,
   onDelete,
   onToggleEnabled,
+  onViewSshKey,
 }: ServerPanelProps) {
   return (
     <Card>
@@ -46,9 +48,16 @@ export function ServerPanel({
           <CardTitle>服务器</CardTitle>
           <CardDescription>所有服务器使用设置中的共享 SSH 私钥</CardDescription>
         </div>
-        <Button onClick={onCreate}>
-          <Plus /> 添加服务器
-        </Button>
+        <div className="flex items-center gap-2">
+          {onViewSshKey && (
+            <Button variant="outline" onClick={onViewSshKey}>
+              <Key className="mr-1.5 size-4" /> 部署公钥
+            </Button>
+          )}
+          <Button onClick={onCreate}>
+            <Plus /> 添加服务器
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <Table>
@@ -102,17 +111,17 @@ function ServerRow({
         {server.hostFingerprint ? `${server.hostFingerprint.slice(0, 24)}…` : "未设置"}
       </TableCell>
       <TableCell>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onToggleEnabled?.(server)}
-          className="inline-flex cursor-pointer transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
-          title={`点击${server.enabled ? "停用" : "启用"}此服务器`}
-        >
-          <Badge variant={server.enabled ? "default" : "secondary"}>
-            {server.enabled ? "启用" : "停用"}
-          </Badge>
-        </button>
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={server.enabled}
+            disabled={busy}
+            onCheckedChange={() => onToggleEnabled?.(server)}
+            aria-label={`切换服务器 ${server.name} 启用状态`}
+          />
+          <span className="text-xs text-muted-foreground">
+            {server.enabled ? "已启用" : "已停用"}
+          </span>
+        </div>
       </TableCell>
       <TableCell className="text-right">
         <div className="flex items-center justify-end gap-1">
