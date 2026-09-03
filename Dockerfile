@@ -14,6 +14,8 @@ RUN pnpm run build
 FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 RUN apk add --no-cache su-exec && addgroup -S app && adduser -S app -G app
 COPY --chown=app:app --from=build /app/.next/standalone ./
 COPY --chown=app:app --from=build /app/.next/static ./.next/static
