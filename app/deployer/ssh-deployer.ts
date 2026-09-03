@@ -54,19 +54,37 @@ export class SSHDeployer implements Deployer {
     finally { client.end(); }
   }
 
-  async deploy(target: DeployTarget, material: DeploymentMaterial, options: { dryRun?: boolean; signal?: AbortSignal } = {}): Promise<DeploymentResult> {
+  async deploy(target: DeployTarget, material: DeploymentMaterial | DeploymentMaterial[], options: { dryRun?: boolean; signal?: AbortSignal } = {}): Promise<DeploymentResult> {
     try { validateCommand(target.validationCommand); validateCommand(target.reloadCommand); if (target.healthCheckCommand) validateCommand(target.healthCheckCommand); } catch (error) { return { targetId: target.id, ok: false, error: (error as Error).message }; }
     if (options.dryRun) return { targetId: target.id, ok: true };
     if (options.signal?.aborted) return { targetId: target.id, ok: false, error: "cancelled" };
-    await Promise.all([readFile(material.certificatePath), readFile(material.privateKeyPath)]);
+
+    const materials = Array.isArray(material) ? material : [material];
+    if (materials.length === 0) return { targetId: target.id, ok: true, exitCode: 0 };
+    await Promise.all(materials.flatMap((m) => [readFile(m.certificatePath), readFile(m.privateKeyPath)]));
+
     const { Client: SshClient } = await import("ssh2");
     const client = this.options.clientFactory?.() ?? new SshClient();
     const tempRoot = `/tmp/ohttps-deploy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const backupCert = posix.join(tempRoot, "previous-fullchain.pem");
-    const backupKey = posix.join(tempRoot, "previous-privkey.pem");
-    const missingCert = posix.join(tempRoot, "fullchain-was-missing");
-    const missingKey = posix.join(tempRoot, "privkey-was-missing");
     const commandOptions = { signal: options.signal, timeoutMs: target.timeoutSeconds * 1000 };
+
+    const items = materials.map((m, idx) => {
+      const destCert = m.certPath ?? (m.domain ? `/etc/nginx/ssl/${m.domain}/fullchain.pem` : target.certPath);
+      const destKey = m.privateKeyPathRemote ?? (m.domain ? `/etc/nginx/ssl/${m.domain}/privkey.pem` : target.privateKeyPath);
+      const suffix = idx === 0 ? "" : `-${idx}`;
+      return {
+        m,
+        destCert,
+        destKey,
+        tempCert: posix.join(tempRoot, `fullchain${suffix}.pem`),
+        tempKey: posix.join(tempRoot, `privkey${suffix}.pem`),
+        backupCert: posix.join(tempRoot, `previous-fullchain${suffix}.pem`),
+        backupKey: posix.join(tempRoot, `previous-privkey${suffix}.pem`),
+        missingCert: posix.join(tempRoot, `fullchain-was-missing${suffix}`),
+        missingKey: posix.join(tempRoot, `privkey-was-missing${suffix}`),
+      };
+    });
+
     let replacementStarted = false;
     let preserveArtifacts = false;
     try {
@@ -75,17 +93,29 @@ export class SSHDeployer implements Deployer {
       await this.exec(client, `mkdir -p ${shellQuote(tempRoot)}`, commandOptions);
       await new Promise<void>((resolve, reject) => client.sftp((error, sftp) => {
         if (error || !sftp) return reject(error ?? new Error("sftp unavailable"));
-        sftp.fastPut(material.certificatePath, posix.join(tempRoot, "fullchain.pem"), (putError) => {
-          if (putError) return reject(putError);
-          sftp.fastPut(material.privateKeyPath, posix.join(tempRoot, "privkey.pem"), (keyError) => keyError ? reject(keyError) : resolve());
-        });
+        let remaining = items.length * 2;
+        let failed = false;
+        const done = (putError?: Error | null) => {
+          if (putError && !failed) { failed = true; return reject(putError); }
+          remaining -= 1;
+          if (remaining === 0 && !failed) resolve();
+        };
+        for (const item of items) {
+          sftp.fastPut(item.m.certificatePath, item.tempCert, done);
+          sftp.fastPut(item.m.privateKeyPath, item.tempKey, done);
+        }
       }));
-      await this.exec(client, `chmod 0644 ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && chmod 0600 ${shellQuote(posix.join(tempRoot, "privkey.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} && test -s ${shellQuote(posix.join(tempRoot, "privkey.pem"))}`, commandOptions);
-      await this.exec(client, `mkdir -p -- ${[...new Set([posix.dirname(target.certPath), posix.dirname(target.privateKeyPath)])].map(shellQuote).join(" ")}`, commandOptions);
-      await this.exec(client, backupCommand(target.certPath, backupCert, missingCert), commandOptions);
-      await this.exec(client, backupCommand(target.privateKeyPath, backupKey, missingKey), commandOptions);
+      const chmodCmd = items.map((item) => `chmod 0644 ${shellQuote(item.tempCert)} && chmod 0600 ${shellQuote(item.tempKey)} && test -s ${shellQuote(item.tempCert)} && test -s ${shellQuote(item.tempKey)}`).join(" && ");
+      await this.exec(client, chmodCmd, commandOptions);
+      const targetDirs = [...new Set(items.flatMap((item) => [posix.dirname(item.destCert), posix.dirname(item.destKey)]))];
+      await this.exec(client, `mkdir -p -- ${targetDirs.map(shellQuote).join(" ")}`, commandOptions);
+      for (const item of items) {
+        await this.exec(client, backupCommand(item.destCert, item.backupCert, item.missingCert), commandOptions);
+        await this.exec(client, backupCommand(item.destKey, item.backupKey, item.missingKey), commandOptions);
+      }
       replacementStarted = true;
-      await this.exec(client, `mv ${shellQuote(posix.join(tempRoot, "fullchain.pem"))} ${shellQuote(target.certPath)} && mv ${shellQuote(posix.join(tempRoot, "privkey.pem"))} ${shellQuote(target.privateKeyPath)}`, commandOptions);
+      const mvCmd = items.map((item) => `mv ${shellQuote(item.tempCert)} ${shellQuote(item.destCert)} && mv ${shellQuote(item.tempKey)} ${shellQuote(item.destKey)}`).join(" && ");
+      await this.exec(client, mvCmd, commandOptions);
       await this.exec(client, target.validationCommand, commandOptions);
       await this.exec(client, target.reloadCommand, commandOptions);
       if (target.healthCheckCommand) await this.exec(client, target.healthCheckCommand, commandOptions);
@@ -94,7 +124,11 @@ export class SSHDeployer implements Deployer {
       let message = sanitizeError((error as Error).message);
       if (replacementStarted) {
         try {
-          await this.exec(client, `${restoreCommand(target.certPath, backupCert, missingCert)} && ${restoreCommand(target.privateKeyPath, backupKey, missingKey)} && ${target.validationCommand} && ${target.reloadCommand}`, commandOptions);
+          const restoreCmds = items.flatMap((item) => [
+            restoreCommand(item.destCert, item.backupCert, item.missingCert),
+            restoreCommand(item.destKey, item.backupKey, item.missingKey),
+          ]).join(" && ");
+          await this.exec(client, `${restoreCmds} && ${target.validationCommand} && ${target.reloadCommand}`, commandOptions);
           message = `${message}; previous certificate restored`;
         } catch (rollbackError) {
           preserveArtifacts = true;

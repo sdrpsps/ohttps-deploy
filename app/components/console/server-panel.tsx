@@ -1,4 +1,4 @@
-import { Key, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Key, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -28,6 +28,7 @@ type ServerPanelProps = {
   onDelete: (target: DeleteTarget) => void;
   onToggleEnabled?: (server: ManagedServer) => void;
   onViewSshKey?: () => void;
+  onDeployServer?: (server: ManagedServer) => void;
 };
 
 export function ServerPanel({
@@ -40,6 +41,7 @@ export function ServerPanel({
   onDelete,
   onToggleEnabled,
   onViewSshKey,
+  onDeployServer,
 }: ServerPanelProps) {
   return (
     <Card>
@@ -85,6 +87,7 @@ export function ServerPanel({
                   onTest={onTest}
                   onDelete={onDelete}
                   onToggleEnabled={onToggleEnabled}
+                  onDeployServer={onDeployServer}
                 />
               ))
             )}
@@ -102,6 +105,7 @@ function ServerRow({
   onTest,
   onDelete,
   onToggleEnabled,
+  onDeployServer,
 }: Omit<ServerPanelProps, "servers" | "loading" | "onCreate"> & { server: ManagedServer }) {
   return (
     <TableRow>
@@ -125,6 +129,17 @@ function ServerRow({
       </TableCell>
       <TableCell className="text-right">
         <div className="flex items-center justify-end gap-1">
+          {onDeployServer && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy || !server.enabled || !server.hostFingerprint}
+              onClick={() => onDeployServer(server)}
+              title="部署该节点分配的所有证书"
+            >
+              <Play className="mr-1 size-3.5" /> 部署证书
+            </Button>
+          )}
           <Button variant="outline" size="sm" disabled={busy || !server.hostFingerprint} onClick={() => onTest(server)}>
             <RefreshCw /> 测试连接
           </Button>

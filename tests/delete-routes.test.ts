@@ -32,6 +32,30 @@ async function run() {
   assert.equal((await db.select().from(logs)).length, 0);
   assert.equal((await db.select().from(certificateTargets)).length, 0);
 
+  // 3. Deployment delete routes
+  const [{ DELETE: deleteDeployment }, { DELETE: clearDeployments }] = await Promise.all([
+    import("../app/api/deployments/[id]/route"),
+    import("../app/api/deployments/route"),
+  ]);
+
+  await db.insert(deployments).values([
+    { id: "dep-del-1", certificateId: "certificate-2", certificateVersionId: "version-2", status: "failed", trigger: "manual" },
+    { id: "dep-del-2", certificateId: "certificate-2", certificateVersionId: "version-2", status: "failed", trigger: "manual" },
+    { id: "dep-del-3", certificateId: "certificate-2", certificateVersionId: "version-2", status: "succeeded", trigger: "manual" },
+  ]);
+
+  const singleDel = await deleteDeployment(new Request("http://localhost/api/deployments/dep-del-1", { method: "DELETE" }), { params: Promise.resolve({ id: "dep-del-1" }) });
+  assert.equal(singleDel.status, 200);
+  assert.equal((await db.select().from(deployments)).filter((d) => d.id === "dep-del-1").length, 0);
+
+  const bulkClear = await clearDeployments(new Request("http://localhost/api/deployments?status=failed", { method: "DELETE" }));
+  assert.equal(bulkClear.status, 200);
+  assert.equal((await bulkClear.json()).data.deletedCount, 1);
+  const remaining = await db.select().from(deployments);
+  assert.equal(remaining.length, 2);
+  assert.ok(remaining.some((d) => d.id === "dep-del-3"));
+  assert.ok(remaining.every((d) => d.status !== "failed"));
+
   console.log("delete route tests passed");
 }
 

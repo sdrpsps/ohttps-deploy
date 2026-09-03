@@ -10,6 +10,8 @@ export async function runMigrations() {
   const table = await client.execute("PRAGMA table_info('deployments')");
   const hasDryRun = table.rows.some((row: Record<string, unknown>) => row.name === "dry_run");
   if (!hasDryRun) await client.execute("ALTER TABLE deployments ADD COLUMN dry_run integer NOT NULL DEFAULT 0");
+  const hasTitle = table.rows.some((row: Record<string, unknown>) => row.name === "title");
+  if (!hasTitle) await client.execute("ALTER TABLE deployments ADD COLUMN title text");
   console.log("Database migrations applied");
 }
 

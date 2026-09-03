@@ -32,6 +32,17 @@ async function run() {
 
   const noVersion = await POST(new Request("http://localhost/api/deployments", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ certificateId: "certificate-2" }) }));
   assert.equal(noVersion.status, 409);
+
+  // Test server-based deployment
+  const serverDeploy = await POST(new Request("http://localhost/api/deployments", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ serverId: "mapped" }) }));
+  assert.equal(serverDeploy.status, 202);
+  assert.equal((await serverDeploy.json()).data.certificateCount, 1);
+
+  // Test all batch deployment
+  const allDeploy = await POST(new Request("http://localhost/api/deployments", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ all: true }) }));
+  assert.equal(allDeploy.status, 202);
+  assert.equal((await allDeploy.json()).data.certificateCount, 1);
+
   console.log("deployment route tests passed");
 }
 

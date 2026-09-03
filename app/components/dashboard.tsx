@@ -65,7 +65,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const healthQuery = useQuery({ queryKey: queryKeys.health, queryFn: () => getApiData<{ worker: boolean }>("/api/health") });
   const deploymentsQuery = useQuery({
     queryKey: queryKeys.deployments,
-    queryFn: () => getApiData<Array<{ id: string; certificateId: string; status: string }>>("/api/deployments"),
+    queryFn: () => getApiData<Array<{ id: string; certificateId?: string | null; certificates?: Array<{ id: string }>; status: string }>>("/api/deployments"),
     enabled: ["overview", "activity"].includes(section),
     refetchInterval: (query) => {
       const deps = query.state.data;
@@ -75,7 +75,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const syncJobsQuery = useQuery({
     queryKey: queryKeys.syncJobs,
     queryFn: () => getApiData<SyncJob[]>("/api/certificate-sync-jobs"),
-    enabled: ["overview", "certificates"].includes(section),
+    enabled: ["overview", "certificates", "activity"].includes(section),
     refetchInterval: (query) => {
       const jobs = query.state.data;
       return jobs?.some((j) => j.status === "queued" || j.status === "running") ? 3_000 : false;
@@ -93,19 +93,33 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const workerOnline = Boolean(healthQuery.data?.worker);
 
   const latestDeploymentByCert = useMemo(() => {
-    const map = new Map<string, { id: string; certificateId: string; status: string }>();
+    const map = new Map<string, { id: string; status: string }>();
     for (const dep of deploymentsQuery.data ?? []) {
-      if (!map.has(dep.certificateId)) {
-        map.set(dep.certificateId, dep);
+      const certIds = dep.certificates?.length
+        ? dep.certificates.map((c) => c.id)
+        : dep.certificateId
+        ? [dep.certificateId]
+        : [];
+      for (const certId of certIds) {
+        if (!map.has(certId)) {
+          map.set(certId, dep);
+        }
       }
     }
     return map;
   }, [deploymentsQuery.data]);
 
+  // 获取所有当前仍处于失败状态、未被后续成功覆盖的异常部署任务（按部署作业去重）
   const failedDeploymentItems = useMemo(() => {
-    return Array.from(latestDeploymentByCert.values()).filter(
-      (item) => item.status === "failed" || item.status === "partial"
-    );
+    const failedDeploymentIds = new Set<string>();
+    const items: Array<{ id: string; status: string }> = [];
+    for (const dep of latestDeploymentByCert.values()) {
+      if ((dep.status === "failed" || dep.status === "partial") && !failedDeploymentIds.has(dep.id)) {
+        failedDeploymentIds.add(dep.id);
+        items.push(dep);
+      }
+    }
+    return items;
   }, [latestDeploymentByCert]);
 
   const failedDeployments = failedDeploymentItems.length;
@@ -226,9 +240,56 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
       const body = await response.json().catch(() => null);
       if (!response.ok) { toast.error(body?.error?.message ?? "部署任务未创建"); return; }
       toast.success(`已创建 ${body.data.targetCount} 台服务器的部署任务`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.deployments });
       router.push(`/activity?deploymentId=${body.data.id}`);
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : "部署任务未创建"); }
     finally { setBusy(false); }
+  }
+
+  async function deployServer(server: ManagedServer) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/deployments", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ serverId: server.id }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        toast.error(body?.error?.message ?? "节点部署任务未创建");
+        return;
+      }
+      toast.success(`已为 ${server.name} 创建 ${body.data.certificateCount} 张证书的部署任务`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.deployments });
+      router.push(`/activity?deploymentId=${body.data.id}`);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "节点部署任务未创建");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deployAllCertificates() {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/deployments", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        toast.error(body?.error?.message ?? "全量部署未创建");
+        return;
+      }
+      toast.success(`全量部署任务已创建：${body.data.certificateCount} 张证书 · ${body.data.targetCount} 台服务器`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.deployments });
+      router.push(`/activity?deploymentId=${body.data.id}`);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "全量部署未创建");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function deleteSelected() {
@@ -335,6 +396,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onEdit={openCertificateDialog}
         onRefresh={(id) => void refreshCertificate(id)}
         onDeploy={(id) => void deployCertificate(id)}
+        onDeployAll={() => void deployAllCertificates()}
         onDelete={setDeleteTarget}
         ohttpsConfigured={settings?.ohttpsConfigured ?? false}
         onViewSyncJob={openSyncTask}
@@ -352,10 +414,18 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onDelete={setDeleteTarget}
         onToggleEnabled={(server) => void toggleServerEnabled(server)}
         onViewSshKey={() => setKeyDialogOpen(true)}
+        onDeployServer={(server) => void deployServer(server)}
       />
     ),
     policies: <PoliciesPanel certificates={certificates} servers={servers} />,
-    activity: <ActivityPanel certificates={certificates} servers={servers} onViewSyncJob={openSyncTask} />,
+    activity: (
+      <ActivityPanel
+        certificates={certificates}
+        servers={servers}
+        syncJobs={syncJobs}
+        onViewSyncJob={openSyncTask}
+      />
+    ),
     notifications: <NotificationPanel />,
   } satisfies Record<DashboardSection, React.ReactNode>;
 

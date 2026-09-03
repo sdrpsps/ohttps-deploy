@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, isNull, lte, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { loadConfig } from "./lib/config";
 import { createLogger } from "./lib/logger";
 import { loadRuntimeSettings, runtimeDefaults, type RuntimeSettings } from "./lib/runtime-settings";
@@ -11,7 +11,7 @@ import { deploymentPaths } from "./domain/deployment-path";
 import { OHTTPSClient, redactSensitive } from "./domain/ohttps-client";
 import { shouldScheduleSync } from "./domain/renewal";
 import { postWebhook, type WebhookEvent } from "./domain/webhook";
-import { certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
+import { certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentCertificates, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
 import { SSHDeployer } from "./deployer";
 import { ensureAdmin } from "./lib/auth";
 import { runMigrations } from "./db/migrate";
@@ -195,6 +195,7 @@ async function createAutoDeployment(certificateId: string, certificateVersionId:
   if (!targets.length) return;
   const deploymentId = randomUUID();
   await db.insert(deployments).values({ id: deploymentId, certificateId, certificateVersionId, syncJobId, trigger: "scheduled" });
+  await db.insert(deploymentCertificates).values({ id: randomUUID(), deploymentId, certificateId, certificateVersionId });
   await db.insert(deploymentTargets).values(targets.map(({ serverId }: { serverId: string }) => ({ id: randomUUID(), deploymentId, serverId })));
 }
 
@@ -219,17 +220,85 @@ async function markSyncedCurrentVersion(certificateId: string, fingerprint: stri
 async function processDeployment(deploymentId: string) {
   const [deployment] = await db.update(deployments).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(and(eq(deployments.id, deploymentId), eq(deployments.status, "queued"))).returning();
   if (!deployment) return;
-  const [certificate] = await db.select({ domain: certificates.domain }).from(certificates).where(eq(certificates.id, deployment.certificateId)).limit(1);
-  if (!certificate) { await failDeployment(deploymentId, "certificate not found"); return; }
-  const remotePaths = deploymentPaths(certificate.domain);
-  const targets = await db.select({ id: deploymentTargets.id, serverId: servers.id, name: servers.name, host: servers.host, port: servers.port, username: servers.username, hostFingerprint: servers.hostFingerprint, validationCommand: servers.validationCommand, reloadCommand: servers.reloadCommand, healthCheckCommand: servers.healthCheckCommand, timeoutSeconds: servers.timeoutSeconds }).from(deploymentTargets).innerJoin(servers, eq(deploymentTargets.serverId, servers.id)).where(eq(deploymentTargets.deploymentId, deploymentId));
-  const [version] = await db.select({ certPath: certificateVersions.certPath, privateKeyPath: certificateVersions.privateKeyPath }).from(certificateVersions).where(eq(certificateVersions.id, deployment.certificateVersionId)).limit(1);
-  if (!version) { await failDeployment(deploymentId, "certificate version not found"); return; }
+
+  // 1. 获取本次部署包含的所有证书
+  let deploymentCerts = await db.select({
+    certificateId: deploymentCertificates.certificateId,
+    domain: certificates.domain,
+    certPath: certificateVersions.certPath,
+    privateKeyPath: certificateVersions.privateKeyPath,
+  })
+    .from(deploymentCertificates)
+    .innerJoin(certificates, eq(deploymentCertificates.certificateId, certificates.id))
+    .innerJoin(certificateVersions, eq(deploymentCertificates.certificateVersionId, certificateVersions.id))
+    .where(eq(deploymentCertificates.deploymentId, deploymentId));
+
+  // 兼容老单证书记录
+  if (!deploymentCerts.length && deployment.certificateId && deployment.certificateVersionId) {
+    const [cert] = await db.select({ domain: certificates.domain }).from(certificates).where(eq(certificates.id, deployment.certificateId)).limit(1);
+    const [ver] = await db.select({ certPath: certificateVersions.certPath, privateKeyPath: certificateVersions.privateKeyPath }).from(certificateVersions).where(eq(certificateVersions.id, deployment.certificateVersionId)).limit(1);
+    if (cert && ver) {
+      deploymentCerts = [{ certificateId: deployment.certificateId, domain: cert.domain, certPath: ver.certPath, privateKeyPath: ver.privateKeyPath }];
+    }
+  }
+
+  if (!deploymentCerts.length) {
+    await failDeployment(deploymentId, "no valid certificates found for deployment");
+    return;
+  }
+
+  const targets = await db.select({
+    id: deploymentTargets.id,
+    serverId: servers.id,
+    name: servers.name,
+    host: servers.host,
+    port: servers.port,
+    username: servers.username,
+    hostFingerprint: servers.hostFingerprint,
+    certPath: servers.certPath,
+    privateKeyPath: servers.privateKeyPath,
+    validationCommand: servers.validationCommand,
+    reloadCommand: servers.reloadCommand,
+    healthCheckCommand: servers.healthCheckCommand,
+    timeoutSeconds: servers.timeoutSeconds,
+  })
+    .from(deploymentTargets)
+    .innerJoin(servers, eq(deploymentTargets.serverId, servers.id))
+    .where(eq(deploymentTargets.deploymentId, deploymentId));
+
+  if (!targets.length) {
+    await failDeployment(deploymentId, "no deployment targets configured");
+    return;
+  }
+
   const [sharedKey] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "shared_ssh_private_key")).limit(1);
-  if (!sharedKey && !deployment.dryRun) { await failDeployment(deploymentId, "shared SSH private key is not configured"); return; }
+  if (!sharedKey && !deployment.dryRun) {
+    await failDeployment(deploymentId, "shared SSH private key is not configured");
+    return;
+  }
+
+  // 获取证书与服务器的分配关系
+  const targetServerIds = targets.map((t) => t.serverId);
+  const certTargetMappings = targetServerIds.length > 0
+    ? await db.select({
+        certificateId: certificateTargets.certificateId,
+        serverId: certificateTargets.serverId,
+      })
+        .from(certificateTargets)
+        .where(inArray(certificateTargets.serverId, targetServerIds))
+    : [];
+
+  const serverToCertIds = new Map<string, Set<string>>();
+  for (const m of certTargetMappings) {
+    const set = serverToCertIds.get(m.serverId) ?? new Set();
+    set.add(m.certificateId);
+    serverToCertIds.set(m.serverId, set);
+  }
+
   const results: Array<{ ok: boolean; error?: string; exitCode?: number }> = [];
   const concurrency = Math.max(1, Math.min(deployment.concurrency, targets.length || 1));
   const cancellation = watchCancellation(async () => (await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1))[0]?.status === "cancelled");
+
   try {
     await cancellation.check();
     for (let offset = 0; offset < targets.length; offset += concurrency) {
@@ -237,14 +306,55 @@ async function processDeployment(deploymentId: string) {
       const batchResults = await Promise.all(batch.map(async (target: any, batchIndex: number) => {
         if (cancellation.signal.aborted) return { ok: false, error: "cancelled" };
         await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-        const result = await new SSHDeployer({ privateKey: sharedKey?.value ?? "" }).deploy({ ...target, ...remotePaths }, { certificatePath: version.certPath, privateKeyPath: version.privateKeyPath }, { dryRun: deployment.dryRun, signal: cancellation.signal });
-        await db.update(deploymentTargets).set({ status: result.ok ? "succeeded" : result.error === "cancelled" ? "cancelled" : "failed", exitCode: result.exitCode ?? null, errorSummary: result.error ?? null, finishedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
-        await db.insert(logs).values({ id: randomUUID(), deploymentId, targetId: target.id, sequence: offset + batchIndex + 1, level: result.ok ? "info" : "error", message: result.ok ? `${target.name} ${deployment.dryRun ? "dry-run succeeded" : "deployed successfully"}` : `${target.name} deployment failed: ${result.error ?? "unknown error"}` });
+
+        // 筛选归属当前服务器的待部署证书
+        const assignedCertIds = serverToCertIds.get(target.serverId);
+        const serverCerts = deploymentCerts.filter((c) => assignedCertIds ? assignedCertIds.has(c.certificateId) : true);
+        const certsToDeploy = serverCerts.length > 0 ? serverCerts : deploymentCerts;
+
+        const materials = certsToDeploy.map((c) => {
+          const paths = deploymentPaths(c.domain);
+          return {
+            domain: c.domain,
+            certificatePath: c.certPath,
+            privateKeyPath: c.privateKeyPath,
+            certPath: paths.certPath,
+            privateKeyPathRemote: paths.privateKeyPath,
+          };
+        });
+
+        // 单次 SSH 连接，合并分发全部证书并统一 reload
+        const result = await new SSHDeployer({ privateKey: sharedKey?.value ?? "" }).deploy(
+          target,
+          materials,
+          { dryRun: deployment.dryRun, signal: cancellation.signal }
+        );
+
+        await db.update(deploymentTargets).set({
+          status: result.ok ? "succeeded" : result.error === "cancelled" ? "cancelled" : "failed",
+          exitCode: result.exitCode ?? null,
+          errorSummary: result.error ?? null,
+          finishedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(deploymentTargets.id, target.id));
+
+        const certNames = certsToDeploy.map((c) => c.domain).join(", ");
+        await db.insert(logs).values({
+          id: randomUUID(),
+          deploymentId,
+          targetId: target.id,
+          sequence: offset + batchIndex + 1,
+          level: result.ok ? "info" : "error",
+          message: result.ok
+            ? `${target.name} ${deployment.dryRun ? "dry-run succeeded" : `deployed ${certsToDeploy.length} certificate(s) (${certNames}) successfully`}`
+            : `${target.name} deployment failed: ${result.error ?? "unknown error"}`,
+        });
         return result;
       }));
       results.push(...batchResults);
     }
   } finally { cancellation.stop(); }
+
   const [latestState] = await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1);
   if (latestState?.status === "cancelled") return;
   const failed = results.filter((result) => !result.ok).length;

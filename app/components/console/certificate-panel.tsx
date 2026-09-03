@@ -39,6 +39,7 @@ type CertificatePanelProps = {
   onEdit: (certificate: Certificate) => void;
   onRefresh: (id: string) => void;
   onDeploy: (id: string) => void;
+  onDeployAll?: () => void;
   onDelete: (target: DeleteTarget) => void;
   ohttpsConfigured: boolean;
   onViewSyncJob: (id: string) => void;
@@ -54,6 +55,7 @@ export function CertificatePanel({
   onEdit,
   onRefresh,
   onDeploy,
+  onDeployAll,
   onDelete,
   ohttpsConfigured,
   onViewSyncJob,
@@ -62,6 +64,8 @@ export function CertificatePanel({
   const [confirming, setConfirming] = useState<Certificate | null>(null);
   const [nginxConfigCert, setNginxConfigCert] = useState<Certificate | null>(null);
 
+  const hasDeployableCerts = certificates.some((c) => Boolean(c.currentVersionId));
+
   return (
     <div className="space-y-6"><Card>
       <CardHeader className="flex-row items-start justify-between gap-4">
@@ -69,9 +73,16 @@ export function CertificatePanel({
           <CardTitle>证书</CardTitle>
           <CardDescription>管理 ohttps 证书及其续期状态</CardDescription>
         </div>
-        <Button onClick={onCreate}>
-          <Plus /> 添加证书
-        </Button>
+        <div className="flex items-center gap-2">
+          {onDeployAll && hasDeployableCerts && (
+            <Button variant="outline" disabled={busy} onClick={onDeployAll}>
+              <Send className="mr-1.5 size-4" /> 全量部署
+            </Button>
+          )}
+          <Button onClick={onCreate}>
+            <Plus className="mr-1 size-4" /> 添加证书
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <Table>

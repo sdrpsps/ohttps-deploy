@@ -61,8 +61,9 @@ export const certificateTargets = sqliteTable("certificate_targets", {
 
 export const deployments = sqliteTable("deployments", {
   id: text("id").primaryKey(),
-  certificateId: text("certificate_id").notNull().references(() => certificates.id),
-  certificateVersionId: text("certificate_version_id").notNull().references(() => certificateVersions.id),
+  title: text("title"),
+  certificateId: text("certificate_id").references(() => certificates.id),
+  certificateVersionId: text("certificate_version_id").references(() => certificateVersions.id),
   syncJobId: text("sync_job_id").references(() => certificateSyncJobs.id),
   trigger: text("trigger", { enum: ["manual", "scheduled", "refresh", "retry"] }).notNull(),
   status: text("status", { enum: ["queued", "running", "succeeded", "failed", "cancelled", "partial"] }).notNull().default("queued"),
@@ -74,6 +75,16 @@ export const deployments = sqliteTable("deployments", {
   errorSummary: text("error_summary"),
   ...timestamps,
 }, (table) => ({ deploymentStatusIdx: index("deployments_status_idx").on(table.status) }));
+
+export const deploymentCertificates = sqliteTable("deployment_certificates", {
+  id: text("id").primaryKey(),
+  deploymentId: text("deployment_id").notNull().references(() => deployments.id, { onDelete: "cascade" }),
+  certificateId: text("certificate_id").notNull().references(() => certificates.id),
+  certificateVersionId: text("certificate_version_id").notNull().references(() => certificateVersions.id),
+  ...timestamps,
+}, (table) => ({
+  deploymentCertUnique: uniqueIndex("deployment_certificates_deployment_cert_idx").on(table.deploymentId, table.certificateId),
+}));
 
 export const deploymentTargets = sqliteTable("deployment_targets", {
   id: text("id").primaryKey(),
@@ -215,5 +226,6 @@ export const authVerifications = sqliteTable("verification", {
 
 export const certificatesRelations = relations(certificates, ({ many }) => ({ versions: many(certificateVersions), deployments: many(deployments) }));
 export const certificateVersionsRelations = relations(certificateVersions, ({ one, many }) => ({ certificate: one(certificates, { fields: [certificateVersions.certificateId], references: [certificates.id] }), deployments: many(deployments) }));
-export const deploymentsRelations = relations(deployments, ({ one, many }) => ({ certificate: one(certificates, { fields: [deployments.certificateId], references: [certificates.id] }), version: one(certificateVersions, { fields: [deployments.certificateVersionId], references: [certificateVersions.id] }), targets: many(deploymentTargets), logs: many(logs) }));
+export const deploymentsRelations = relations(deployments, ({ one, many }) => ({ certificate: one(certificates, { fields: [deployments.certificateId], references: [certificates.id] }), version: one(certificateVersions, { fields: [deployments.certificateVersionId], references: [certificateVersions.id] }), certificates: many(deploymentCertificates), targets: many(deploymentTargets), logs: many(logs) }));
+export const deploymentCertificatesRelations = relations(deploymentCertificates, ({ one }) => ({ deployment: one(deployments, { fields: [deploymentCertificates.deploymentId], references: [deployments.id] }), certificate: one(certificates, { fields: [deploymentCertificates.certificateId], references: [certificates.id] }), version: one(certificateVersions, { fields: [deploymentCertificates.certificateVersionId], references: [certificateVersions.id] }) }));
 export const deploymentTargetsRelations = relations(deploymentTargets, ({ one, many }) => ({ deployment: one(deployments, { fields: [deploymentTargets.deploymentId], references: [deployments.id] }), server: one(servers, { fields: [deploymentTargets.serverId], references: [servers.id] }), logs: many(logs) }));
