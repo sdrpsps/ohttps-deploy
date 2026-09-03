@@ -22,11 +22,17 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
         }
         const [job] = await db.select({ status: certificateSyncJobs.status }).from(certificateSyncJobs).where(eq(certificateSyncJobs.id, id)).limit(1);
         if (!job || ["succeeded", "failed", "cancelled"].includes(job.status)) {
+          const remaining = await db.select({ id: logs.id, sequence: logs.sequence, level: logs.level, message: logs.message, createdAt: logs.createdAt })
+            .from(logs).where(and(eq(logs.syncJobId, id), gt(logs.sequence, sequence))).orderBy(asc(logs.sequence));
+          for (const row of remaining) {
+            sequence = row.sequence;
+            controller.enqueue(encoder.encode(`id: ${row.sequence}\ndata: ${JSON.stringify(row)}\n\n`));
+          }
           controller.enqueue(encoder.encode(`event: end\ndata: ${JSON.stringify({ syncJobId: id })}\n\n`));
           controller.close();
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
     } catch { if (!closed) controller.error(new Error("event stream failed")); }
   }});

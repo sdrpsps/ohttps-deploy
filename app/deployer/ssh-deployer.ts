@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { posix } from "node:path";
 import type { Client, ClientChannel, ConnectConfig } from "ssh2";
-import { Deployer, DeploymentMaterial, DeployTarget, DeploymentResult, validateCommand } from "./deployer";
+import { Deployer, DeploymentMaterial, DeployTarget, DeploymentResult, validateCommand, DeployOptions } from "./deployer";
 
 type SshFactory = () => Client;
 
@@ -54,9 +54,12 @@ export class SSHDeployer implements Deployer {
     finally { client.end(); }
   }
 
-  async deploy(target: DeployTarget, material: DeploymentMaterial | DeploymentMaterial[], options: { dryRun?: boolean; signal?: AbortSignal } = {}): Promise<DeploymentResult> {
+  async deploy(target: DeployTarget, material: DeploymentMaterial | DeploymentMaterial[], options: DeployOptions = {}): Promise<DeploymentResult> {
     try { validateCommand(target.validationCommand); validateCommand(target.reloadCommand); if (target.healthCheckCommand) validateCommand(target.healthCheckCommand); } catch (error) { return { targetId: target.id, ok: false, error: (error as Error).message }; }
-    if (options.dryRun) return { targetId: target.id, ok: true };
+    if (options.dryRun) {
+      await options.onProgress?.("dry_run", "执行 dry-run 模拟部署，命令格式校验通过");
+      return { targetId: target.id, ok: true };
+    }
     if (options.signal?.aborted) return { targetId: target.id, ok: false, error: "cancelled" };
 
     const materials = Array.isArray(material) ? material : [material];
@@ -88,8 +91,15 @@ export class SSHDeployer implements Deployer {
     let replacementStarted = false;
     let preserveArtifacts = false;
     try {
+      await options.onProgress?.("connecting", `正在通过 SSH 连接服务器 (${target.host}:${target.port})...`);
       await new Promise<void>((resolve, reject) => { client.once("ready", () => resolve()).once("error", reject).connect(this.connectConfig(target)); });
+      await options.onProgress?.("connected", `SSH 连接成功，主机指纹校验通过`);
+
+      await options.onProgress?.("pre_validating", `正在执行服务前置配置校验 (${target.validationCommand})...`);
       await this.exec(client, target.validationCommand, commandOptions);
+      await options.onProgress?.("pre_validated", "前置配置校验通过");
+
+      await options.onProgress?.("uploading", `正在通过 SFTP 上传证书文件至临时目录 (${items.length} 组证书)...`);
       await this.exec(client, `mkdir -p ${shellQuote(tempRoot)}`, commandOptions);
       await new Promise<void>((resolve, reject) => client.sftp((error, sftp) => {
         if (error || !sftp) return reject(error ?? new Error("sftp unavailable"));
@@ -107,6 +117,9 @@ export class SSHDeployer implements Deployer {
       }));
       const chmodCmd = items.map((item) => `chmod 0644 ${shellQuote(item.tempCert)} && chmod 0600 ${shellQuote(item.tempKey)} && test -s ${shellQuote(item.tempCert)} && test -s ${shellQuote(item.tempKey)}`).join(" && ");
       await this.exec(client, chmodCmd, commandOptions);
+      await options.onProgress?.("uploaded", "证书文件传输完成，权限已设置为 0644/0600");
+
+      await options.onProgress?.("replacing", "正在备份现有证书并执行原子替换...");
       const targetDirs = [...new Set(items.flatMap((item) => [posix.dirname(item.destCert), posix.dirname(item.destKey)]))];
       await this.exec(client, `mkdir -p -- ${targetDirs.map(shellQuote).join(" ")}`, commandOptions);
       for (const item of items) {
@@ -116,23 +129,38 @@ export class SSHDeployer implements Deployer {
       replacementStarted = true;
       const mvCmd = items.map((item) => `mv ${shellQuote(item.tempCert)} ${shellQuote(item.destCert)} && mv ${shellQuote(item.tempKey)} ${shellQuote(item.destKey)}`).join(" && ");
       await this.exec(client, mvCmd, commandOptions);
+      await options.onProgress?.("replaced", "证书文件已替换至目标路径");
+
+      await options.onProgress?.("testing", `正在校验新证书配置 (${target.validationCommand})...`);
       await this.exec(client, target.validationCommand, commandOptions);
+      await options.onProgress?.("tested", "新配置校验通过");
+
+      await options.onProgress?.("reloading", `正在重载服务 (${target.reloadCommand})...`);
       await this.exec(client, target.reloadCommand, commandOptions);
-      if (target.healthCheckCommand) await this.exec(client, target.healthCheckCommand, commandOptions);
+      await options.onProgress?.("reloaded", "服务重载成功");
+
+      if (target.healthCheckCommand) {
+        await options.onProgress?.("health_checking", `正在执行服务健康检查 (${target.healthCheckCommand})...`);
+        await this.exec(client, target.healthCheckCommand, commandOptions);
+        await options.onProgress?.("health_checked", "服务健康检查通过");
+      }
       return { targetId: target.id, ok: true, exitCode: 0 };
     } catch (error) {
       let message = sanitizeError((error as Error).message);
       if (replacementStarted) {
         try {
+          await options.onProgress?.("rollback", "部署遇到异常，正在尝试回滚上一份证书配置...", "warn");
           const restoreCmds = items.flatMap((item) => [
             restoreCommand(item.destCert, item.backupCert, item.missingCert),
             restoreCommand(item.destKey, item.backupKey, item.missingKey),
           ]).join(" && ");
           await this.exec(client, `${restoreCmds} && ${target.validationCommand} && ${target.reloadCommand}`, commandOptions);
           message = `${message}; previous certificate restored`;
+          await options.onProgress?.("rolled_back", "旧证书配置已成功恢复", "warn");
         } catch (rollbackError) {
           preserveArtifacts = true;
           message = `${message}; rollback failed: ${sanitizeError((rollbackError as Error).message)}`;
+          await options.onProgress?.("rollback_failed", `回滚失败：${sanitizeError((rollbackError as Error).message)}`, "error");
         }
       }
       return { targetId: target.id, ok: false, error: message };

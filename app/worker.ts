@@ -153,18 +153,18 @@ async function processSyncJob(jobId: string) {
     if (!runtimeSettings.ohttpsApiId || !runtimeSettings.ohttpsApiKey) throw new Error("ohttps credentials are not configured");
     await progress("quota", "正在检查本次 ohttps 调用额度");
     await consumeOhttpsCall();
-    await progress("fetching", "正在从 ohttps 获取最新证书");
+    await progress("fetching", `正在从 ohttps 获取最新证书 (证书 ID: ${certificate.ohttpsCertificateId})`);
     const payload = await new OHTTPSClient(runtimeSettings.ohttpsApiId, runtimeSettings.ohttpsApiKey).getCertificate(certificate.ohttpsCertificateId);
-    await progress("validating", "正在校验证书、私钥与域名");
+    await progress("validating", `正在校验证书、私钥与域名匹配: ${certificate.domain}`);
     const parsed = validateCertificatePair(payload.fullChainCerts, payload.certKey, { requiredSans: [certificate.domain] });
     const now = new Date();
     if (current && current.fingerprint === parsed.fingerprint && current.notAfter.getTime() === parsed.notAfter.getTime()) {
       await db.update(certificates).set({ expiresAt: parsed.notAfter, lastCheckedAt: now, lastSyncAt: now, updatedAt: now }).where(eq(certificates.id, certificate.id));
       await markSyncedCurrentVersion(certificate.id, current.fingerprint);
-      await progress("succeeded", "远端证书与当前版本一致，无需部署");
+      await progress("succeeded", `远端证书与本地版本一致 (到期时间: ${parsed.notAfter.toISOString().slice(0, 10)})，无需更新`);
       return finishSyncJob(jobId, "succeeded");
     }
-    await progress("saving", "发现新证书版本，正在安全保存");
+    await progress("saving", `发现新证书版本 (到期时间: ${parsed.notAfter.toISOString().slice(0, 10)})，正在安全保存`);
     const stored = await certificateStore.saveVersion(certificate.id, { certificatePem: payload.fullChainCerts, privateKeyPem: payload.certKey, fetchedAt: now, metadata: { source: "ohttps" } });
     const [latest] = await db.select({ version: certificateVersions.version }).from(certificateVersions).where(eq(certificateVersions.certificateId, certificate.id)).orderBy(desc(certificateVersions.version)).limit(1);
     const versionId = randomUUID();
@@ -295,6 +295,21 @@ async function processDeployment(deploymentId: string) {
     serverToCertIds.set(m.serverId, set);
   }
 
+  let sequence = 0;
+  const logProgress = async (message: string, targetId?: string | null, level: "info" | "warn" | "error" = "info") => {
+    const currentSeq = ++sequence;
+    await db.insert(logs).values({
+      id: randomUUID(),
+      deploymentId,
+      targetId: targetId ?? null,
+      sequence: currentSeq,
+      level,
+      message,
+    });
+  };
+
+  await logProgress(`Worker 已接手部署任务，准备部署至 ${targets.length} 台受管服务器`);
+
   const results: Array<{ ok: boolean; error?: string; exitCode?: number }> = [];
   const concurrency = Math.max(1, Math.min(deployment.concurrency, targets.length || 1));
   const cancellation = watchCancellation(async () => (await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1))[0]?.status === "cancelled");
@@ -303,7 +318,7 @@ async function processDeployment(deploymentId: string) {
     await cancellation.check();
     for (let offset = 0; offset < targets.length; offset += concurrency) {
       const batch = targets.slice(offset, offset + concurrency);
-      const batchResults = await Promise.all(batch.map(async (target: any, batchIndex: number) => {
+      const batchResults = await Promise.all(batch.map(async (target: any) => {
         if (cancellation.signal.aborted) return { ok: false, error: "cancelled" };
         await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(), updatedAt: new Date() }).where(eq(deploymentTargets.id, target.id));
 
@@ -323,11 +338,20 @@ async function processDeployment(deploymentId: string) {
           };
         });
 
+        const certNames = certsToDeploy.map((c) => c.domain).join(", ");
+        await logProgress(`[${target.name}] 开始部署证书 (${certNames}) 至服务器节点...`, target.id);
+
         // 单次 SSH 连接，合并分发全部证书并统一 reload
         const result = await new SSHDeployer({ privateKey: sharedKey?.value ?? "" }).deploy(
           target,
           materials,
-          { dryRun: deployment.dryRun, signal: cancellation.signal }
+          {
+            dryRun: deployment.dryRun,
+            signal: cancellation.signal,
+            onProgress: async (_phase, msg, level) => {
+              await logProgress(`[${target.name}] ${msg}`, target.id, level ?? "info");
+            },
+          }
         );
 
         await db.update(deploymentTargets).set({
@@ -338,17 +362,13 @@ async function processDeployment(deploymentId: string) {
           updatedAt: new Date(),
         }).where(eq(deploymentTargets.id, target.id));
 
-        const certNames = certsToDeploy.map((c) => c.domain).join(", ");
-        await db.insert(logs).values({
-          id: randomUUID(),
-          deploymentId,
-          targetId: target.id,
-          sequence: offset + batchIndex + 1,
-          level: result.ok ? "info" : "error",
-          message: result.ok
-            ? `${target.name} ${deployment.dryRun ? "dry-run succeeded" : `deployed ${certsToDeploy.length} certificate(s) (${certNames}) successfully`}`
-            : `${target.name} deployment failed: ${result.error ?? "unknown error"}`,
-        });
+        await logProgress(
+          result.ok
+            ? `[${target.name}] ${deployment.dryRun ? "dry-run 模拟校验成功" : `已成功部署 ${certsToDeploy.length} 张证书 (${certNames})`}`
+            : `[${target.name}] 部署失败：${result.error ?? "未知错误"}`,
+          target.id,
+          result.ok ? "info" : "error"
+        );
         return result;
       }));
       results.push(...batchResults);
@@ -359,6 +379,10 @@ async function processDeployment(deploymentId: string) {
   if (latestState?.status === "cancelled") return;
   const failed = results.filter((result) => !result.ok).length;
   const status = failed === 0 ? "succeeded" : failed === results.length || deployment.failurePolicy === "all_success" ? "failed" : "partial";
+  if (targets.length > 1) {
+    const succeededCount = results.filter((r) => r.ok).length;
+    await logProgress(`所有服务器部署完毕：${succeededCount} 成功，${failed} 失败`);
+  }
   await db.update(deployments).set({ status, finishedAt: new Date(), errorSummary: failed ? `${failed} target(s) failed` : null, updatedAt: new Date() }).where(eq(deployments.id, deploymentId));
   await queueNotification(`deployment.${status}`, "deployment", deploymentId, status === "succeeded" ? "success" : "failure", failed ? `${failed} target(s) failed` : undefined);
 }
@@ -420,7 +444,7 @@ async function run() {
     while (!stopping) {
       await pollQueue();
       if (stopping) break;
-      await sleep(15_000);
+      await sleep(3_000);
     }
   } finally { stopHeartbeat?.(); stopHeartbeat = undefined; }
 }

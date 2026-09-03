@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import type { Certificate, ManagedServer } from "./types";
 
 const certificateSchema = z.object({
@@ -104,7 +105,7 @@ export function CertificateFormDialog({
               <div className="space-y-2 rounded-lg border p-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <FormLabel className="text-sm font-medium">自动部署目标服务器（可选）</FormLabel>
+                    <Label className="text-sm font-medium">自动部署目标服务器（可选）</Label>
                     <p className="text-xs text-muted-foreground">新证书获取后将自动推送至已勾选的服务器并执行重载。</p>
                   </div>
                   <div className="flex shrink-0 gap-1">
@@ -149,14 +150,14 @@ export function CertificateFormDialog({
                             form.setValue("serverIds", next, { shouldDirty: true });
                           }}
                         />
-                        <label
+                        <Label
                           htmlFor={`cert-server-${server.id}`}
                           className={`text-xs cursor-pointer ${!server.enabled ? "text-muted-foreground line-through" : ""}`}
                         >
                           <span className="font-medium">{server.name}</span>
                           <span className="ml-1.5 font-mono text-muted-foreground">({server.host}:{server.port})</span>
                           {!server.enabled && " [已停用]"}
-                        </label>
+                        </Label>
                       </div>
                     );
                   })}

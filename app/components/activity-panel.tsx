@@ -193,10 +193,20 @@ export function ActivityPanel({
       const entry = JSON.parse(event.data) as LogEntry;
       queryClient.setQueryData<DeploymentDetail>(
         queryKeys.deployment(selected.id),
-        (current) =>
-          current?.id === selected.id
-            ? { ...current, logs: [...current.logs, entry] }
-            : current
+        (current) => {
+          if (!current || current.id !== selected.id) return current;
+          const exists = current.logs.some(
+            (item) =>
+              (entry.id && item.id === entry.id) ||
+              (entry.sequence && item.sequence === entry.sequence)
+          );
+          if (exists) return current;
+          return {
+            ...current,
+            status: current.status === "queued" ? "running" : current.status,
+            logs: [...current.logs, entry],
+          };
+        }
       );
     };
     source.addEventListener("end", () => {

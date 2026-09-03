@@ -257,6 +257,12 @@ export function DeploymentDetailSheet({
               <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <Terminal className="size-3.5" />
                 执行日志 ({deployment.logs.length})
+                {!isTerminal && (
+                  <span className="flex items-center gap-1 text-[11px] font-normal text-primary lowercase tracking-normal">
+                    <span className="size-1.5 rounded-full bg-primary animate-ping" />
+                    实时流式输出中
+                  </span>
+                )}
               </h4>
               <div className="flex items-center gap-2">
                 <Button
@@ -315,11 +321,29 @@ export function DeploymentDetailSheet({
                 </div>
               ))}
               {deployment.logs.length === 0 && (
-                <p className="text-slate-500 py-4 text-center">
-                  {deployment.status === "queued"
-                    ? "等待 Worker 接手任务…"
-                    : "暂无日志输出…"}
-                </p>
+                <div className="flex flex-col items-center justify-center py-6 text-slate-400 gap-2">
+                  {!isTerminal ? (
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex size-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full size-2.5 bg-emerald-500"></span>
+                      </span>
+                      <span className="text-xs text-slate-300 font-sans">
+                        {deployment.status === "queued"
+                          ? "等待 Worker 接手任务中，即将开始执行…"
+                          : "Worker 正在建立 SSH 连接并准备执行部署…"}
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">暂无日志输出</p>
+                  )}
+                </div>
+              )}
+              {!isTerminal && deployment.logs.length > 0 && (
+                <div className="pt-2 flex items-center gap-2 text-[11px] text-slate-400 select-none">
+                  <span className="size-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>任务进行中，正在保持连接...</span>
+                </div>
               )}
               <div ref={logEndRef} />
             </div>
