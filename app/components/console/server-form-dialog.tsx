@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Copy, Fingerprint, LoaderCircle } from "lucide-react";
+import { Copy, Fingerprint, LoaderCircle, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Control, useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { copyToClipboard } from "@/lib/utils";
 import type { ManagedServer } from "./types";
 
 const serverSchema = z.object({
@@ -91,13 +92,18 @@ export function ServerFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{server ? "编辑服务器" : "添加服务器"}</DialogTitle>
-          <DialogDescription>配置 SSH 连接与主机指纹；私钥由共享设置统一管理。</DialogDescription>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <Server className="size-5 text-primary" />
+            <span>{server ? "编辑部署目标服务器" : "添加部署目标服务器"}</span>
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            配置目标主机的 SSH 连接参数与严格主机指纹；私钥由共享设置统一管理与推送。
+          </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form className="space-y-4" onSubmit={form.handleSubmit(submit)}>
+          <form className="space-y-4 pt-1" onSubmit={form.handleSubmit(submit)}>
             <div className="grid gap-4 sm:grid-cols-2">
               <TextField control={form.control} name="name" label="名称" placeholder="Nginx · Tokyo" />
               <TextField control={form.control} name="host" label="主机" placeholder="host.example.com" />
@@ -108,11 +114,19 @@ export function ServerFormDialog({
                 name="port"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>端口</FormLabel>
+                    <FormLabel className="text-xs">端口</FormLabel>
                     <FormControl>
-                      <Input type="number" {...field} onChange={(event) => field.onChange(event.target.valueAsNumber)} />
+                      <Input
+                        type="number"
+                        {...field}
+                        onChange={(event) =>
+                          field.onChange(
+                            Number.isNaN(event.target.valueAsNumber) ? "" : event.target.valueAsNumber
+                          )
+                        }
+                      />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-[11px]" />
                   </FormItem>
                 )}
               />
@@ -128,15 +142,16 @@ export function ServerFormDialog({
                 return (
                   <FormItem>
                     <div className="flex items-center justify-between gap-3">
-                      <FormLabel>主机指纹</FormLabel>
-                      <Button type="button" variant="outline" size="sm" disabled={busy || fetchingFingerprint} onClick={() => void fetchFingerprint()}>
-                        {fetchingFingerprint ? <LoaderCircle className="animate-spin" /> : <Fingerprint />}
-                        {fetchingFingerprint ? "获取中..." : server ? "重新获取" : "获取指纹"}
+                      <FormLabel className="text-xs">主机指纹</FormLabel>
+                      <Button type="button" variant="outline" size="sm" className="h-7 text-xs gap-1" disabled={busy || fetchingFingerprint} onClick={() => void fetchFingerprint()}>
+                        {fetchingFingerprint ? <LoaderCircle className="size-3 animate-spin" /> : <Fingerprint className="size-3" />}
+                        <span>{fetchingFingerprint ? "获取中..." : server ? "重新获取" : "获取指纹"}</span>
                       </Button>
                     </div>
                     <FormControl>
                       <Input
                         placeholder="SHA256:...（可点击按钮获取或手动粘贴）"
+                        className="font-mono text-xs"
                         {...field}
                         onChange={(event) => {
                           const raw = event.target.value;
@@ -145,9 +160,9 @@ export function ServerFormDialog({
                         }}
                       />
                     </FormControl>
-                    <FormMessage />
+                    <FormMessage className="text-[11px]" />
                     <details className="mt-1 text-xs text-muted-foreground">
-                      <summary className="cursor-pointer hover:text-foreground">
+                      <summary className="cursor-pointer hover:text-foreground font-medium">
                         自动获取失败？查看手动获取指纹命令
                       </summary>
                       <div className="mt-1.5 rounded-md bg-muted p-2.5">
@@ -163,9 +178,10 @@ export function ServerFormDialog({
                             variant="ghost"
                             size="sm"
                             className="h-6 shrink-0 px-2 text-xs"
-                            onClick={() => {
-                              void navigator.clipboard.writeText(keyscanCmd);
-                              toast.success("keyscan 命令已复制到剪贴板");
+                            onClick={async () => {
+                              const ok = await copyToClipboard(keyscanCmd);
+                              if (ok) toast.success("keyscan 命令已复制到剪贴板");
+                              else toast.error("复制失败，请手动选择复制");
                             }}
                           >
                             <Copy className="mr-1 size-3" />
@@ -182,7 +198,7 @@ export function ServerFormDialog({
               control={form.control}
               name="enabled"
               render={({ field }) => (
-                <FormItem className="flex flex-row items-center space-x-3 space-y-0 rounded-lg border p-3">
+                <FormItem className="flex flex-row items-center space-x-3 space-y-0 rounded-xl border border-border/80 bg-muted/[0.08] p-3.5">
                   <FormControl>
                     <Checkbox
                       checked={field.value}
@@ -190,31 +206,44 @@ export function ServerFormDialog({
                     />
                   </FormControl>
                   <div className="space-y-1 leading-none">
-                    <FormLabel className="cursor-pointer font-medium">启用此服务器</FormLabel>
-                    <p className="text-xs text-muted-foreground">
+                    <FormLabel className="cursor-pointer text-xs font-medium">启用此服务器</FormLabel>
+                    <p className="text-[11px] text-muted-foreground">
                       停用后该服务器不会接收后续的自动或手动证书部署。
                     </p>
                   </div>
                 </FormItem>
               )}
             />
-            <details className="rounded-lg border px-3 py-2">
-              <summary className="cursor-pointer text-sm font-medium">高级部署配置</summary>
+            <details className="rounded-xl border border-border/80 px-3.5 py-2.5">
+              <summary className="cursor-pointer text-xs font-semibold text-foreground">高级部署配置</summary>
               <div className="mt-4 space-y-4">
                 <CommandField control={form.control} name="validationCommand" label="部署前检查命令" placeholder="sudo -n nginx -t" />
                 <CommandField control={form.control} name="reloadCommand" label="重载命令" placeholder="sudo -n nginx -s reload" />
                 <CommandField control={form.control} name="healthCheckCommand" label="健康检查命令（可选）" placeholder="curl -fsS http://127.0.0.1/health" />
                 <FormField control={form.control} name="timeoutSeconds" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>单台超时（秒）</FormLabel>
-                    <FormControl><Input type="number" min={1} max={300} {...field} onChange={(event) => field.onChange(event.target.valueAsNumber)} /></FormControl>
-                    <FormMessage />
+                    <FormLabel className="text-xs">单台超时（秒）</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={300}
+                        {...field}
+                        onChange={(event) =>
+                          field.onChange(
+                            Number.isNaN(event.target.valueAsNumber) ? "" : event.target.valueAsNumber
+                          )
+                        }
+                      />
+                    </FormControl>
+                    <FormMessage className="text-[11px]" />
                   </FormItem>
                 )} />
               </div>
             </details>
-            <Button className="w-full" disabled={busy}>
-              {busy ? "保存中..." : server ? "保存修改" : "保存服务器"}
+            <Button className="w-full gap-1.5 shadow-sm" disabled={busy}>
+              {busy && <LoaderCircle className="size-3.5 animate-spin" />}
+              <span>{busy ? "保存中..." : server ? "保存修改" : "保存服务器"}</span>
             </Button>
           </form>
         </Form>

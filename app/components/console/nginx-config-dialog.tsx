@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { copyToClipboard } from "@/lib/utils";
 import type { Certificate } from "./types";
 
 type NginxConfigDialogProps = {
@@ -62,16 +63,21 @@ server {
     }
 }`;
 
-  const copySnippet = () => {
-    void navigator.clipboard.writeText(nginxSnippet);
-    setCopied(true);
-    toast.success("Nginx 配置片段已复制到剪贴板");
-    setTimeout(() => setCopied(false), 2000);
+  const copySnippet = async () => {
+    const ok = await copyToClipboard(nginxSnippet);
+    if (ok) {
+      setCopied(true);
+      toast.success("Nginx 配置片段已复制到剪贴板");
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      toast.error("复制失败，请手动选择复制");
+    }
   };
 
-  const copyPath = (path: string, label: string) => {
-    void navigator.clipboard.writeText(path);
-    toast.success(`${label}已复制`);
+  const copyPath = async (path: string, label: string) => {
+    const ok = await copyToClipboard(path);
+    if (ok) toast.success(`${label}已复制`);
+    else toast.error("复制失败，请手动选择复制");
   };
 
   return (

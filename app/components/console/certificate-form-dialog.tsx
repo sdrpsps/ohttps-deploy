@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { LoaderCircle, ShieldCheck } from "lucide-react";
 import { useEffect } from "react";
 import { Control, useForm } from "react-hook-form";
 import { z } from "zod";
@@ -69,15 +70,18 @@ export function CertificateFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{certificate ? "编辑证书" : "添加证书"}</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <ShieldCheck className="size-5 text-primary" />
+            <span>{certificate ? "编辑证书资产" : "添加证书资产"}</span>
+          </DialogTitle>
+          <DialogDescription className="text-xs">
             {certificate ? "修改证书配置与自动部署目标服务器。" : "接入 ohttps 证书并绑定自动部署的目标服务器"}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form className="space-y-4" onSubmit={form.handleSubmit(submit)}>
+          <form className="space-y-4 pt-1" onSubmit={form.handleSubmit(submit)}>
             <TextField control={form.control} name="name" label="名称" placeholder="生产环境主站" />
             <TextField control={form.control} name="domain" label="域名" placeholder="example.com" />
             <TextField control={form.control} name="ohttpsCertificateId" label="ohttps 证书 ID" placeholder="cert_xxxxxxxxx" />
@@ -86,27 +90,31 @@ export function CertificateFormDialog({
               name="renewBeforeDays"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>提前续期天数</FormLabel>
+                  <FormLabel className="text-xs">提前续期天数</FormLabel>
                   <FormControl>
                     <Input
                       type="number"
                       min={1}
                       max={365}
                       {...field}
-                      onChange={(event) => field.onChange(event.target.valueAsNumber)}
+                      onChange={(event) =>
+                        field.onChange(
+                          Number.isNaN(event.target.valueAsNumber) ? "" : event.target.valueAsNumber
+                        )
+                      }
                     />
                   </FormControl>
-                  <FormMessage />
+                  <FormMessage className="text-[11px]" />
                 </FormItem>
               )}
             />
 
             {servers.length > 0 ? (
-              <div className="space-y-2 rounded-lg border p-3">
+              <div className="space-y-2 rounded-xl border border-border/80 bg-muted/[0.08] p-3.5">
                 <div className="flex items-center justify-between">
                   <div>
                     <Label className="text-sm font-medium">自动部署目标服务器（可选）</Label>
-                    <p className="text-xs text-muted-foreground">新证书获取后将自动推送至已勾选的服务器并执行重载。</p>
+                    <p className="text-[11px] text-muted-foreground">新证书获取后将自动推送至已勾选的服务器并执行重载。</p>
                   </div>
                   <div className="flex shrink-0 gap-1">
                     <Button
@@ -135,7 +143,7 @@ export function CertificateFormDialog({
                     </Button>
                   </div>
                 </div>
-                <div className="max-h-36 space-y-2 overflow-y-auto pt-1">
+                <div className="max-h-40 space-y-2 overflow-y-auto pt-1">
                   {servers.map((server) => {
                     const checked = (form.watch("serverIds") || []).includes(server.id);
                     return (
@@ -152,7 +160,7 @@ export function CertificateFormDialog({
                         />
                         <Label
                           htmlFor={`cert-server-${server.id}`}
-                          className={`text-xs cursor-pointer ${!server.enabled ? "text-muted-foreground line-through" : ""}`}
+                          className={`text-xs cursor-pointer select-none ${!server.enabled ? "text-muted-foreground line-through" : ""}`}
                         >
                           <span className="font-medium">{server.name}</span>
                           <span className="ml-1.5 font-mono text-muted-foreground">({server.host}:{server.port})</span>
@@ -164,13 +172,14 @@ export function CertificateFormDialog({
                 </div>
               </div>
             ) : (
-              <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+              <div className="rounded-xl border border-dashed p-3.5 text-xs text-muted-foreground">
                 暂无部署服务器。保存证书后可在「服务器」中添加目标主机，或在「部署策略」中随时关联。
               </div>
             )}
 
-            <Button className="w-full" disabled={busy}>
-              {busy ? "保存中..." : certificate ? "保存修改" : "创建证书"}
+            <Button className="w-full gap-1.5 shadow-sm" disabled={busy}>
+              {busy && <LoaderCircle className="size-3.5 animate-spin" />}
+              <span>{busy ? "保存中..." : certificate ? "保存修改" : "创建证书"}</span>
             </Button>
           </form>
         </Form>

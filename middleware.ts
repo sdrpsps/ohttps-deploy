@@ -18,11 +18,12 @@ function trustedOrigin(request: NextRequest) {
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
-  // 登录页、健康检查和 Better Auth 自身的接口不需要登录。
+  // 登录页、健康检查、Better Auth 接口与公共静态资产不需要登录。
   const isPublicPath =
     path === "/login" ||
     path === "/api/health" ||
-    path.startsWith("/api/auth/");
+    path.startsWith("/api/auth/") ||
+    /\.(png|jpg|jpeg|gif|svg|ico|webp)$/.test(path);
   if (isPublicPath) return NextResponse.next();
 
   // 限制单个来源的请求频率，避免登录和管理接口被滥用。
@@ -68,4 +69,8 @@ export async function middleware(request: NextRequest) {
   }
 }
 
-export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
+export const config = {
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};

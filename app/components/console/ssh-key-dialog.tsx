@@ -23,6 +23,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
+import { copyToClipboard } from "@/lib/utils";
 
 const keySchema = z.object({ privateKey: z.string().min(1, "请输入私钥内容") });
 type KeyForm = z.infer<typeof keySchema>;
@@ -88,7 +89,10 @@ export function SshKeyDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>共享 SSH 私钥</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Key className="size-5 text-primary" />
+            <span>共享 SSH 私钥</span>
+          </DialogTitle>
           <DialogDescription>
             {configured ? "已配置私钥。粘贴新内容会替换当前私钥。" : "配置后，所有服务器将使用这把私钥连接。"}
           </DialogDescription>
@@ -109,9 +113,10 @@ export function SshKeyDialog({
                 variant="outline"
                 size="sm"
                 className="h-7 text-xs"
-                onClick={() => {
-                  void navigator.clipboard.writeText(publicKey);
-                  toast.success("公钥已复制到剪贴板");
+                onClick={async () => {
+                  const ok = await copyToClipboard(publicKey);
+                  if (ok) toast.success("公钥已复制到剪贴板");
+                  else toast.error("复制失败，请手动选择复制");
                 }}
               >
                 <Copy className="mr-1 size-3" />
@@ -142,9 +147,10 @@ export function SshKeyDialog({
                       variant="ghost"
                       size="sm"
                       className="h-6 shrink-0 px-2 text-xs"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(`sudo bash scripts/setup-ohttps-deploy-user.sh "${publicKey}"`);
-                        toast.success("脚本命令已复制");
+                      onClick={async () => {
+                        const ok = await copyToClipboard(`sudo bash scripts/setup-ohttps-deploy-user.sh "${publicKey}"`);
+                        if (ok) toast.success("脚本命令已复制");
+                        else toast.error("复制失败，请手动选择复制");
                       }}
                     >
                       <Copy className="mr-1 size-3" />
@@ -165,9 +171,10 @@ export function SshKeyDialog({
                       variant="ghost"
                       size="sm"
                       className="h-6 shrink-0 px-2 text-xs"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(`echo "${publicKey}" >> ~/.ssh/authorized_keys`);
-                        toast.success("写入命令已复制");
+                      onClick={async () => {
+                        const ok = await copyToClipboard(`echo "${publicKey}" >> ~/.ssh/authorized_keys`);
+                        if (ok) toast.success("写入命令已复制");
+                        else toast.error("复制失败，请手动选择复制");
                       }}
                     >
                       <Copy className="mr-1 size-3" />

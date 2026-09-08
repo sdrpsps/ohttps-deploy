@@ -436,6 +436,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         navigation={navigation}
         workerOnline={workerOnline}
         onSettings={() => setSettingsDialogOpen(true)}
+        onChangePassword={() => setChangePasswordDialogOpen(true)}
       >
         <div className="space-y-8">
           {section === "overview" && settings && (
