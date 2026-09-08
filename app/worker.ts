@@ -14,7 +14,6 @@ import { postWebhook, type WebhookEvent } from "./domain/webhook";
 import { certificateSyncJobs, certificateTargets, certificates, certificateVersions, deployments, deploymentCertificates, deploymentTargets, logs, notifications, servers, settings } from "./db/schema";
 import { SSHDeployer } from "./deployer";
 import { ensureAdmin } from "./lib/auth";
-import { runMigrations } from "./db/migrate";
 import { WorkerLease } from "./worker/lease";
 import { enqueueSyncJob } from "./worker/sync-jobs";
 import { reserveOhttpsCall } from "./worker/daily-limit";
@@ -65,12 +64,15 @@ async function pollQueue() {
   if (polling || stopping) return;
   polling = true;
   let leaseLost = false;
-  if (!await workerLease.acquire()) { polling = false; return; }
-  const renewLease = setInterval(() => {
-    void workerLease.renew().then((held) => { leaseLost ||= !held; }).catch(() => { leaseLost = true; });
-  }, 10_000);
-  const assertLease = () => { if (leaseLost) throw new Error("worker lease lost"); };
+  let leaseHeld = false;
+  let renewLease: NodeJS.Timeout | undefined;
   try {
+    leaseHeld = await workerLease.acquire();
+    if (!leaseHeld) return;
+    renewLease = setInterval(() => {
+      void workerLease.renew().then((held) => { leaseLost ||= !held; }).catch(() => { leaseLost = true; });
+    }, 10_000);
+    const assertLease = () => { if (leaseLost) throw new Error("worker lease lost"); };
     runtimeSettings = await loadRuntimeSettings();
     assertLease();
     await recordHeartbeat();
@@ -90,8 +92,8 @@ async function pollQueue() {
     await purgeExpiredRecords();
   } catch (error) { logger.error("queue poll failed", { error: String(error) }); }
   finally {
-    clearInterval(renewLease);
-    await workerLease.release().catch((error) => logger.warn("worker lease release failed", { error: String(error) }));
+    if (renewLease) clearInterval(renewLease);
+    if (leaseHeld) await workerLease.release().catch((error) => logger.warn("worker lease release failed", { error: String(error) }));
     polling = false;
   }
 }
@@ -427,11 +429,6 @@ async function deliverPendingNotifications() {
 }
 
 async function run() {
-  try {
-    await runMigrations();
-  } catch (error) {
-    logger.error("database migration failed", { error: String(error) });
-  }
   try {
     const password = await ensureAdmin();
     logger.info("worker started");

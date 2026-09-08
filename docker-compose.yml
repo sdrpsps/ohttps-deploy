@@ -22,6 +22,7 @@ services:
   worker:
     image: *app-image
     command: node --import tsx app/worker.ts
+    restart: unless-stopped
     env_file: .env
     volumes:
       - ${OHTTPS_DATA_DIR:-./data}:/app/data
