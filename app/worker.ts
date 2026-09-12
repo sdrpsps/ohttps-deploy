@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import { loadConfig } from "./lib/config";
 import { createLogger } from "./lib/logger";
 import { loadRuntimeSettings, runtimeDefaults, type RuntimeSettings } from "./lib/runtime-settings";
-import { db } from "./db";
+import { databaseReady, db } from "./db";
 import { CertificateStore } from "./domain/certificate-store";
 import { validateCertificatePair } from "./domain/certificate";
 import { deploymentPaths } from "./domain/deployment-path";
@@ -430,6 +430,7 @@ async function deliverPendingNotifications() {
 
 async function run() {
   try {
+    await databaseReady;
     const password = await ensureAdmin();
     logger.info("worker started");
     if (password) logger.info("initial admin password generated", { username: "admin", password });

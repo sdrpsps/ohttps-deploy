@@ -1,9 +1,10 @@
 import "dotenv/config";
 import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import { db, client } from "./index";
+import { databaseReady, db, client } from "./index";
 
 export async function runMigrations() {
+  await databaseReady;
   await migrate(db, { migrationsFolder: "./drizzle" });
   // Keep existing SQLite volumes safe when a release introduced a migration
   // file after the volume was created or the migration was interrupted.

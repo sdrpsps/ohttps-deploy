@@ -5,6 +5,7 @@ services:
     image: *app-image
     build: .
     command: node server.js
+    restart: unless-stopped
     env_file: .env
     environment:
       SKIP_DB_MIGRATION: "1"
