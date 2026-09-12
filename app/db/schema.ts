@@ -164,14 +164,6 @@ export const settings = sqliteTable("settings", {
   ...timestamps,
 });
 
-export const admins = sqliteTable("admins", {
-  id: text("id").primaryKey(),
-  username: text("username").notNull().unique().default("admin"),
-  passwordHash: text("password_hash").notNull(),
-  lastLoginAt: integer("last_login_at", { mode: "timestamp_ms" }),
-  ...timestamps,
-});
-
 // Better Auth core tables. Keep these names aligned with app/lib/better-auth.ts.
 export const authUsers = sqliteTable("user", {
   id: text("id").primaryKey(),
