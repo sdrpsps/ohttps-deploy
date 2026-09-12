@@ -2,7 +2,7 @@
 
 import { ChevronDown, ChevronRight, KeyRound, LogOut, Menu, Settings2, ShieldCheck, User } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,12 +45,15 @@ export function ConsoleLayout({
 }: ConsoleLayoutProps) {
   const router = useRouter();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isNavigating, startTransition] = useTransition();
   const selected = navigation.find((item) => item.value === section) ?? navigation[0];
   const SelectedIcon = selected.icon;
 
   function chooseSection(value: string) {
     const item = navigation.find((entry) => entry.value === value);
-    if (item) router.push(item.href);
+    if (item && item.value !== section) {
+      startTransition(() => router.push(item.href));
+    }
     setMobileNavOpen(false);
   }
 
@@ -69,9 +72,6 @@ export function ConsoleLayout({
             >
               <Icon className="size-4 shrink-0 transition-transform group-hover:scale-110" />
               <span className="flex-1 text-left">{label}</span>
-              {value === section && (
-                <span className="size-1.5 rounded-full bg-primary" />
-              )}
             </TabsTrigger>
           ))}
 
@@ -234,9 +234,14 @@ export function ConsoleLayout({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          {isNavigating ? (
+            <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-primary/15" aria-hidden="true">
+              <div className="h-full w-1/3 animate-[loading_1s_ease-in-out_infinite] rounded-full bg-primary motion-reduce:animate-none" />
+            </div>
+          ) : null}
         </header>
 
-        <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-8">
+        <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-8" aria-busy={isNavigating}>
           <TabsContent value={section} className="mt-0 outline-none">
             {children}
           </TabsContent>

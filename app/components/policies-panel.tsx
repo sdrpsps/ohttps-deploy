@@ -26,6 +26,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DashboardSkeleton } from "@/components/console/dashboard-skeleton";
 import {
   Dialog,
   DialogContent,
@@ -145,6 +146,8 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
       (s) => s.name.toLowerCase().includes(q) || s.host.toLowerCase().includes(q)
     );
   }, [servers, modalSearch]);
+
+  if (isLoading) return <DashboardSkeleton section="policies" />;
 
   return (
     <div className="space-y-6">

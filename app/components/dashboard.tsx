@@ -12,6 +12,7 @@ import { CertificateFormDialog } from "@/components/console/certificate-form-dia
 import { ChangePasswordDialog } from "@/components/console/change-password-dialog";
 import { CertificatePanel } from "@/components/console/certificate-panel";
 import { ConsoleLayout } from "@/components/console/console-layout";
+import { DashboardSkeleton } from "@/components/console/dashboard-skeleton";
 import { DeleteDialog } from "@/components/console/delete-dialog";
 import { OverviewPanel } from "@/components/console/overview-panel";
 import { ServerFormDialog } from "@/components/console/server-form-dialog";
@@ -146,6 +147,14 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const latestFailedSyncJobId = failedSyncJobItems[0]?.id;
 
   const loading = [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery].some((query) => query.isLoading);
+  const pageLoading = {
+    overview: [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery],
+    certificates: [certificatesQuery, settingsQuery, syncJobsQuery],
+    servers: [serversQuery],
+    policies: [certificatesQuery, serversQuery, policiesQuery],
+    activity: [certificatesQuery, serversQuery, deploymentsQuery, syncJobsQuery],
+    notifications: [],
+  }[section].some((query) => query.isLoading);
   const loadError = [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery].find((query) => query.error)?.error;
 
   useEffect(() => {
@@ -449,7 +458,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
               { label: "检查 Worker 状态", done: workerOnline, icon: Activity },
             ]} />
           )}
-          {content[section]}
+          {pageLoading ? <DashboardSkeleton section={section} /> : content[section]}
         </div>
       </ConsoleLayout>
 

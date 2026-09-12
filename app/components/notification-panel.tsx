@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DashboardSkeleton } from "@/components/console/dashboard-skeleton";
 import {
   Card,
   CardContent,
@@ -101,6 +102,8 @@ export function NotificationPanel() {
       setRetryingId(null);
     }
   }
+
+  if (isLoading) return <DashboardSkeleton section="notifications" />;
 
   return (
     <div className="space-y-6">

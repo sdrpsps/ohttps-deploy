@@ -75,4 +75,9 @@
   html { @apply antialiased; }
   body { @apply bg-background text-foreground; font-family: var(--font-sans); font-feature-settings: "rlig" 1, "calt" 1; }
   ::selection { background: oklch(0.704 0.14 182.503 / .24); }
+
+  @keyframes loading {
+    0% { transform: translateX(-125%); }
+    100% { transform: translateX(325%); }
+  }
 }

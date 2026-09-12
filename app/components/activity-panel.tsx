@@ -11,6 +11,7 @@ import {
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ActivityMetrics } from "@/components/activity/activity-metrics";
+import { DashboardSkeleton } from "@/components/console/dashboard-skeleton";
 import { DeploymentDetailSheet } from "@/components/activity/deployment-detail-sheet";
 import { TaskHistory } from "@/components/activity/task-history";
 import {
@@ -109,6 +110,8 @@ export function ActivityPanel({
   const logs = logsQuery.data ?? [];
   const auditEvents = auditEventsQuery.data ?? [];
   const selected = selectedQuery.data ?? null;
+
+  const initialLoading = [deploymentsQuery, logsQuery, auditEventsQuery].some((query) => query.isLoading);
 
   const historyError = [deploymentsQuery, logsQuery, auditEventsQuery].find(
     (result) => result.error
@@ -218,6 +221,8 @@ export function ActivityPanel({
     });
     return () => source.close();
   }, [selected?.id, selected?.status, queryClient]);
+
+  if (initialLoading) return <DashboardSkeleton section="activity" />;
 
   return (
     <div className="space-y-6">

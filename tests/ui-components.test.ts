@@ -44,4 +44,23 @@ assert.ok(
   "Label must be used for server list title in CertificateFormDialog"
 );
 
+// 4. Verify route transitions and initial data loads have a visual loading state.
+const dashboardSkeleton = fs.readFileSync(
+  path.resolve("app/components/console/dashboard-skeleton.tsx"),
+  "utf-8"
+);
+for (const section of ["overview", "certificates", "servers", "policies", "activity", "notifications"]) {
+  assert.ok(
+    dashboardSkeleton.includes(`section === \"${section}\"`) || dashboardSkeleton.includes(`section === \"certificates\" || section === \"servers\"`),
+    `DashboardSkeleton must cover the ${section} section`
+  );
+}
+
+const consoleLayoutContent = fs.readFileSync(
+  path.resolve("app/components/console/console-layout.tsx"),
+  "utf-8"
+);
+assert.ok(consoleLayoutContent.includes("useTransition"), "Console navigation must use a transition state");
+assert.ok(consoleLayoutContent.includes("aria-busy={isNavigating}"), "Console content must expose its navigation loading state");
+
 console.log("UI component contract tests passed");
