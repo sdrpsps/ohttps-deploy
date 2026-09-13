@@ -2,7 +2,7 @@ import { inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { settings } from "@/db/schema";
 
-const keys = ["ohttps_api_id", "ohttps_api_key", "webhook_url", "webhook_secret", "renew_before_days", "ohttps_min_interval_seconds", "ohttps_daily_call_limit", "scheduler_interval_minutes", "log_retention_days"] as const;
+const keys = ["ohttps_api_id", "ohttps_api_key", "webhook_url", "renew_before_days", "ohttps_min_interval_seconds", "ohttps_daily_call_limit", "scheduler_interval_minutes", "log_retention_days"] as const;
 type Key = (typeof keys)[number];
 
 export const runtimeDefaults = {
@@ -17,7 +17,6 @@ export type RuntimeSettings = typeof runtimeDefaults & {
   ohttpsApiId: string;
   ohttpsApiKey: string;
   webhookUrl: string;
-  webhookSecret: string;
 };
 
 function positiveInteger(value: string | undefined, fallback: number) {
@@ -33,7 +32,6 @@ export async function loadRuntimeSettings(): Promise<RuntimeSettings> {
     ohttpsApiId: values.ohttps_api_id ?? "",
     ohttpsApiKey: values.ohttps_api_key ?? "",
     webhookUrl: values.webhook_url ?? "",
-    webhookSecret: values.webhook_secret ?? "",
     renewBeforeDays: positiveInteger(values.renew_before_days, runtimeDefaults.renewBeforeDays),
     ohttpsMinIntervalSeconds: positiveInteger(values.ohttps_min_interval_seconds, runtimeDefaults.ohttpsMinIntervalSeconds),
     ohttpsDailyCallLimit: positiveInteger(values.ohttps_daily_call_limit, runtimeDefaults.ohttpsDailyCallLimit),

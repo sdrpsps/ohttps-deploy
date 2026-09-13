@@ -13,7 +13,7 @@
 - 按服务器指纹验证 SSH 主机，临时上传后原子替换证书和私钥，执行 `nginx -t`、reload 与可选健康检查；失败后尝试回滚远端文件。
 - 为每张证书设置部署目标；查看任务、目标级状态、实时日志和历史记录，并可取消或重试任务。API 也支持任务级并发、失败策略和 dry-run。
 - 定时扫描本地证书。仅在进入续期窗口后同步 ohttps，且受到每证书最小间隔、每日调用上限和“每版本一次”保护，避免无意义的调用成本。
-- 将同步、部署、过期和恢复事件作为带 HMAC 签名的 JSON Webhook 投递，并记录失败、重试和投递结果。
+- 将同步、部署、过期和恢复事件以 Bark JSON 格式推送，并记录失败、重试和投递结果。
 - 提供审计记录、基础 Prometheus 指标、数据库备份/恢复接口和日志归档。
 
 ## 工作方式
@@ -21,7 +21,7 @@
 | 组件 | 职责 | 必须持久化的内容 |
 | --- | --- | --- |
 | Web | 登录、配置、创建任务、查询历史、SSE 日志流 | 无状态；与 Worker 共享数据目录 |
-| Worker | 数据库迁移、调度、本地检查、ohttps 同步、SSH 部署、Webhook 与归档 | SQLite、证书版本、日志归档 |
+| Worker | 数据库迁移、调度、本地检查、ohttps 同步、SSH 部署、Bark 推送与归档 | SQLite、证书版本、日志归档 |
 | 目标服务器 | 验证来源 SSH 主机、接收证书、验证并重载 Nginx | 当前使用中的证书与私钥 |
 
 ## 开始前准备
@@ -59,7 +59,7 @@ chmod 700 data
 - 通过 HTTPS 反向代理部署时，设为浏览器实际访问的完整 Origin，例如 `https://certs.example.com`；不要添加路径或末尾 `/`。
 - 如需把持久数据放到其他位置，设置 `OHTTPS_DATA_DIR` 为中心机上的绝对路径。该目录包含数据库、私钥、证书版本和归档日志，必须限制访问权限。
 
-默认 `DATABASE_URL`、`CERTIFICATE_STORAGE_DIR` 和 `LOG_ARCHIVE_DIR` 都位于 `./data`。不要把真实 ohttps 凭据、私钥、证书或 Webhook secret 写进 `.env`、仓库或截图：它们应在登录后通过控制台保存。
+默认 `DATABASE_URL`、`CERTIFICATE_STORAGE_DIR` 和 `LOG_ARCHIVE_DIR` 都位于 `./data`。不要把真实 ohttps 凭据、私钥或证书写进 `.env`、仓库或截图；Bark 推送 URL 可在登录后通过控制台保存与回显。
 
 ### 2. 启动 Web 与 Worker
 
@@ -99,10 +99,10 @@ docker compose down
 
 1. 填写 ohttps API ID 和 API Key。
 2. 点击“配置私钥”，粘贴专用 SSH 私钥完整内容。
-3. 可选：填写 Webhook URL 和签名密钥。
+3. 可选：填写 Bark 推送 URL（例如 `https://api.day.app/<设备 Key>`），可直接发送测试消息，无需先保存。
 4. 检查续期与调度值。默认值为提前 20 天续期、最小调用间隔 86,400 秒、每日最多 100 次调用、每 60 分钟扫描、日志保留 90 天。
 
-保存后，页面和 API 只会显示凭据是否已配置，不会显示已保存的内容。
+保存后，Bark 推送 URL 会直接回显；ohttps API Key 仍只会以掩码显示。
 
 ### 2. 准备目标服务器
 
@@ -177,17 +177,15 @@ Worker 按“设置”中的扫描频率读取每张启用证书的本地版本�
 - **任务**：查看队列、运行、成功、部分成功、失败和取消状态；正在执行的任务可以取消，未成功任务可以按原策略重试。
 - **同步历史**：查看证书同步阶段、错误摘要和日志。相同版本不会重复部署。
 - **审计与活动**：按证书、服务器、状态和时间筛选。日志使用 SSE 实时显示，断线后可按任务 ID 从历史记录恢复。
-- **通知**：配置 Webhook 后，系统投递带事件 ID 和 HMAC 签名的 JSON。接收端应校验 `x-ohttps-deploy-signature`，并使用 `x-ohttps-deploy-event-id` 去重。
+- **通知**：配置 Bark 推送 URL 后，系统会向该 URL 发送 JSON `POST`。每条通知都不包含私钥、完整证书或原始密钥。
 
-Webhook 事件体的形状如下；不包含私钥、完整证书或原始密钥：
+Bark 请求体的形状如下：
 
 ```json
 {
-  "eventId": "…",
-  "eventType": "deployment.succeeded",
-  "occurredAt": "2026-09-02T00:00:00.000Z",
-  "object": { "type": "deployment", "id": "…" },
-  "status": "success"
+  "title": "ohttps-deploy · 证书部署成功",
+  "body": "事件：deployment.succeeded\\n对象：deployment/…",
+  "group": "ohttps-deploy"
 }
 ```
 
@@ -201,10 +199,10 @@ Webhook 事件体的形状如下；不包含私钥、完整证书或原始密钥
 ## 安全边界
 
 - 当前版本只支持**单管理员**和**中心端 SSH push**；不提供多用户、RBAC、密码 SSH 登录或 pull agent。
-- ohttps 凭据、共享 SSH 私钥和 Webhook secret 按该自托管 MVP 的设计明文保存在 SQLite。数据库备份包含这些凭据；完整恢复还需要与之配套的证书目录快照。数据目录、备份和容器主机访问权限必须按最高敏感级别管理。
+- ohttps 凭据、共享 SSH 私钥和包含 Bark 设备 Key 的推送 URL 按该自托管 MVP 的设计明文保存在 SQLite。数据库备份包含这些凭据；完整恢复还需要与之配套的证书目录快照。数据目录、备份和容器主机访问权限必须按最高敏感级别管理。
 - 为站点配置 HTTPS 反向代理，设置正确的 `BETTER_AUTH_URL`，限制 `3000` 端口只对反向代理或可信网络开放，并设置长期随机 `AUTH_SECRET`。
 - 目标服务器必须使用专用低权限用户和已验证的主机指纹。不要使用 `StrictHostKeyChecking=no`、共享 root SSH 密钥，或在 reload 命令中放入不受控制的 shell 内容。
-- API、日志、前端和 Webhook 都不应暴露私钥或完整 PEM；看到此类内容时，立即轮换受影响凭据并检查日志与备份访问范围。
+- API、日志、前端和 Bark 推送都不应暴露私钥或完整 PEM；看到此类内容时，立即轮换受影响凭据并检查日志与备份访问范围。
 - 生产前至少完成一次备份恢复演练和一次 dry-run。此项目提供基础指标与恢复接口，但不替代网络隔离、备份加密、监控告警和运维响应流程。
 
 ## 本地开发与验证

@@ -190,10 +190,10 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     }
   }
 
-  async function runAction(endpoint: string, method: "POST" | "DELETE", successMessage: string) {
+  async function runAction(endpoint: string, method: "POST" | "DELETE", successMessage: string, data?: Record<string, unknown>) {
     setBusy(true);
     try {
-      const response = await fetch(endpoint, { method });
+      const response = await fetch(endpoint, data ? { method, headers: { "content-type": "application/json" }, body: JSON.stringify(data) } : { method });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         toast.error(body?.error?.message ?? body?.data?.error ?? "操作未完成");
@@ -514,6 +514,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         settings={settings}
         onOpenChange={setSettingsDialogOpen}
         onSave={(value) => save("/api/settings", value, "系统设置已保存")}
+        onTestBark={(webhookUrl) => void runAction("/api/settings/test-bark", "POST", "Bark 测试消息已发送", { webhookUrl })}
         onConfigureSshKey={() => {
           setKeyDialogOpen(true);
         }}

@@ -113,10 +113,10 @@ export function NotificationPanel() {
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               <Webhook className="size-5 text-primary" />
-              <CardTitle className="text-lg font-semibold">系统通知与 Webhook</CardTitle>
+              <CardTitle className="text-lg font-semibold">系统通知与 Bark</CardTitle>
             </div>
             <CardDescription className="text-xs">
-              实时监控证书同步、SSH 部署与证书过期事件的签名 Webhook 投递记录，支持失败指数退避与手动重试
+              实时监控证书同步、SSH 部署与证书过期事件的 Bark 推送记录，支持失败指数退避与手动重试
             </CardDescription>
           </div>
 
@@ -223,9 +223,9 @@ export function NotificationPanel() {
                           <div className="flex size-10 items-center justify-center rounded-full bg-muted">
                             <Bell className="size-5 text-muted-foreground" />
                           </div>
-                          <p className="text-sm font-medium">暂无 Webhook 通知记录</p>
+                          <p className="text-sm font-medium">暂无 Bark 推送记录</p>
                           <p className="text-xs text-muted-foreground">
-                            在系统设置中配置 Webhook URL 后，所有证书同步与部署事件将自动签名投递。
+                            在系统设置中配置 Bark 推送 URL 后，所有证书同步与部署事件将自动推送。
                           </p>
                         </div>
                       </TableCell>

@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Bell, Clock, Key, KeyRound, LoaderCircle, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Bell, Clock, Key, KeyRound, LoaderCircle, Send, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,22 +19,21 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 
 const schema = z.object({
-  ohttpsApiId: z.string().max(200), ohttpsApiKey: z.string().max(500), webhookUrl: z.string().url("请输入有效 URL").or(z.literal("")), webhookSecret: z.string().max(500),
+  ohttpsApiId: z.string().max(200), ohttpsApiKey: z.string().max(500), webhookUrl: z.string().url("请输入有效 URL").or(z.literal("")),
   renewBeforeDays: z.coerce.number().int().min(1).max(365), ohttpsMinIntervalSeconds: z.coerce.number().int().min(60).max(31_536_000), ohttpsDailyCallLimit: z.coerce.number().int().min(1).max(100_000), schedulerIntervalMinutes: z.coerce.number().int().min(1).max(1_440), logRetentionDays: z.coerce.number().int().min(1).max(3_650),
 });
 type SettingsForm = z.infer<typeof schema>;
 
-export type SettingsSummary = Omit<SettingsForm, "ohttpsApiKey" | "webhookSecret"> & {
+export type SettingsSummary = Omit<SettingsForm, "ohttpsApiKey"> & {
   ohttpsApiId?: string;
   ohttpsApiKeyMasked?: string;
   ohttpsConfigured: boolean;
-  webhookSecretConfigured: boolean;
   sharedSshPrivateKeyConfigured: boolean;
 };
 
-type Props = { open: boolean; busy: boolean; settings: SettingsSummary | null; onOpenChange: (open: boolean) => void; onSave: (value: SettingsForm) => Promise<boolean>; onConfigureSshKey: () => void; onChangePassword: () => void };
+type Props = { open: boolean; busy: boolean; settings: SettingsSummary | null; onOpenChange: (open: boolean) => void; onSave: (value: SettingsForm) => Promise<boolean>; onTestBark: (webhookUrl: string) => void; onConfigureSshKey: () => void; onChangePassword: () => void };
 
-export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onConfigureSshKey, onChangePassword }: Props) {
+export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onTestBark, onConfigureSshKey, onChangePassword }: Props) {
   const form = useForm<SettingsForm>({ resolver: zodResolver(schema), defaultValues: defaults });
   useEffect(() => {
     if (open) {
@@ -43,13 +42,17 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onC
         ...settings,
         ohttpsApiId: settings?.ohttpsApiId ?? "",
         ohttpsApiKey: "",
-        webhookSecret: "",
       });
     }
   }, [form, open, settings]);
   async function submit(value: SettingsForm) { if (await onSave(value)) onOpenChange(false); }
   const secretHint = (configured: boolean) => configured ? "已配置；留空则保持不变。" : "尚未配置。";
   const intervalSeconds = form.watch("ohttpsMinIntervalSeconds");
+  const webhookUrl = form.watch("webhookUrl");
+
+  async function testBark() {
+    if (await form.trigger("webhookUrl")) onTestBark(form.getValues("webhookUrl"));
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -104,7 +107,7 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onC
               </div>
             </section>
 
-            {/* 2. Webhook */}
+            {/* 2. Bark */}
             <section className="space-y-3 rounded-xl border border-border/80 bg-muted/[0.08] p-4">
               <div className="flex items-center justify-between border-b border-border/40 pb-2.5">
                 <div className="flex items-center gap-2">
@@ -112,8 +115,8 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onC
                     <Bell className="size-4" />
                   </div>
                   <div>
-                    <h3 className="text-xs font-semibold text-foreground">Webhook 事件通知</h3>
-                    <p className="text-[11px] text-muted-foreground">部署结果、证书同步与即将过期等重要事件将以 HMAC 签名 JSON 投递。</p>
+                    <h3 className="text-xs font-semibold text-foreground">Bark 推送通知</h3>
+                    <p className="text-[11px] text-muted-foreground">部署结果、证书同步与即将过期等重要事件将以 Bark JSON 格式推送。</p>
                   </div>
                 </div>
                 {settings?.webhookUrl ? (
@@ -125,20 +128,19 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onC
                 )}
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 pt-1">
-                <TextField
-                  control={form.control}
-                  name="webhookUrl"
-                  label="Webhook 接收 URL"
-                  placeholder="https://example.com/ssl-webhook；留空则停用"
-                />
-                <TextField
-                  control={form.control}
-                  name="webhookSecret"
-                  label="Webhook 签名密钥"
-                  type="password"
-                  placeholder={secretHint(settings?.webhookSecretConfigured ?? false)}
-                />
+              <div className="flex flex-wrap items-end gap-2 pt-1">
+                <div className="min-w-64 flex-1">
+                  <TextField
+                    control={form.control}
+                    name="webhookUrl"
+                    label="Bark 推送 URL"
+                    placeholder="https://api.day.app/你的设备 Key；留空则停用"
+                  />
+                </div>
+                <Button type="button" variant="outline" size="sm" className="mb-0.5 h-9 gap-1.5" disabled={busy || !webhookUrl} onClick={() => void testBark()}>
+                  <Send className="size-3.5" />
+                  发送测试消息
+                </Button>
               </div>
             </section>
 
@@ -272,7 +274,7 @@ function formatSecondsFriendly(seconds: number): string {
   return `${seconds} 秒`;
 }
 
-function TextField({ control, name, label, type = "text", placeholder, autoComplete }: { control: ReturnType<typeof useForm<SettingsForm>>["control"]; name: keyof SettingsForm; label: string; type?: string; placeholder?: string; autoComplete?: string }) {
+function TextField({ control, name, label, type = "text", placeholder, autoComplete, disabled = false }: { control: ReturnType<typeof useForm<SettingsForm>>["control"]; name: keyof SettingsForm; label: string; type?: string; placeholder?: string; autoComplete?: string; disabled?: boolean }) {
   return (
     <FormField
       control={control}
@@ -283,6 +285,7 @@ function TextField({ control, name, label, type = "text", placeholder, autoCompl
           <FormControl>
             <Input
               type={type}
+              disabled={disabled}
               placeholder={placeholder}
               autoComplete={autoComplete ?? (type === "password" ? "new-password" : "off")}
               {...field}
@@ -304,4 +307,4 @@ function TextField({ control, name, label, type = "text", placeholder, autoCompl
   );
 }
 
-const defaults: SettingsForm = { ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "", webhookSecret: "", renewBeforeDays: 20, ohttpsMinIntervalSeconds: 86400, ohttpsDailyCallLimit: 100, schedulerIntervalMinutes: 60, logRetentionDays: 90 };
+const defaults: SettingsForm = { ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "", renewBeforeDays: 20, ohttpsMinIntervalSeconds: 86400, ohttpsDailyCallLimit: 100, schedulerIntervalMinutes: 60, logRetentionDays: 90 };

@@ -1,4 +1,3 @@
-import { createHmac } from "node:crypto";
 import { redactSensitive } from "./ohttps-client";
 
 export type WebhookEvent = {
@@ -10,16 +9,34 @@ export type WebhookEvent = {
   errorSummary?: string;
 };
 
-export function signWebhook(body: string, secret: string) {
-  return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+const barkEventTitles: Record<string, string> = {
+  "certificate.cache_missing": "证书本地缓存缺失",
+  "certificate.expired": "证书已过期",
+  "certificate.expiring": "证书即将过期",
+  "certificate.recovered": "证书已恢复",
+  "certificate.synced": "证书同步成功",
+  "certificate.sync_failed": "证书同步失败",
+  "deployment.succeeded": "证书部署成功",
+  "deployment.partial": "证书部署部分失败",
+  "deployment.failed": "证书部署失败",
+  "notification.test": "Bark 测试消息",
+};
+
+export function toBarkPayload(event: WebhookEvent) {
+  const object = event.object.id ? `${event.object.type}/${event.object.id}` : event.object.type;
+  return {
+    title: `ohttps-deploy · ${barkEventTitles[event.eventType] ?? event.eventType}`,
+    body: [`事件：${event.eventType}`, `对象：${object}`, ...(event.errorSummary ? [`错误：${event.errorSummary}`] : [])].join("\n"),
+    group: "ohttps-deploy",
+  };
 }
 
-export async function postWebhook(event: WebhookEvent, url: string, secret: string, fetchImpl: typeof fetch = fetch) {
-  const body = JSON.stringify(event);
+export async function postWebhook(event: WebhookEvent, url: string, fetchImpl: typeof fetch = fetch) {
+  const body = JSON.stringify(toBarkPayload(event));
   try {
     const response = await fetchImpl(url, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-ohttps-deploy-signature": signWebhook(body, secret), "x-ohttps-deploy-event-id": event.eventId },
+      headers: { "content-type": "application/json; charset=utf-8" },
       body,
       signal: AbortSignal.timeout(10_000),
     });

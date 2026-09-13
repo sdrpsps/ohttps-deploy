@@ -25,7 +25,7 @@ import { nextScanAt } from "./worker/schedule";
 const config = loadConfig();
 const logger = createLogger("worker");
 const certificateStore = new CertificateStore(config.CERTIFICATE_STORAGE_DIR);
-let runtimeSettings: RuntimeSettings = { ...runtimeDefaults, ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "", webhookSecret: "" };
+let runtimeSettings: RuntimeSettings = { ...runtimeDefaults, ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "" };
 
 let stopping = false;
 let stopHeartbeat: (() => void) | undefined;
@@ -396,7 +396,7 @@ async function failDeployment(id: string, message: string) {
 }
 
 async function queueNotification(eventType: string, objectType: string, objectId: string, status: WebhookEvent["status"], errorSummary?: string) {
-  if (!runtimeSettings.webhookUrl || !runtimeSettings.webhookSecret) return;
+  if (!runtimeSettings.webhookUrl) return;
   const occurredAt = new Date().toISOString();
   // A day is the notification time window; retries reuse the same event id.
   const eventId = createHash("sha256").update(`${eventType}:${objectType}:${objectId}:${occurredAt.slice(0, 10)}`).digest("hex");
@@ -405,7 +405,7 @@ async function queueNotification(eventType: string, objectType: string, objectId
 }
 
 async function deliverPendingNotifications() {
-  if (!runtimeSettings.webhookUrl || !runtimeSettings.webhookSecret) return;
+  if (!runtimeSettings.webhookUrl) return;
   const now = new Date();
   const pending = await db.select().from(notifications)
     .where(or(eq(notifications.status, "pending"), and(eq(notifications.status, "failed"), lte(notifications.nextRetryAt, now), isNull(notifications.deliveredAt))))
@@ -417,7 +417,7 @@ async function deliverPendingNotifications() {
       await db.update(notifications).set({ status: "failed", lastError: "stored webhook event is invalid", updatedAt: new Date() }).where(eq(notifications.id, notification.id));
       continue;
     }
-    const result = await postWebhook(event, runtimeSettings.webhookUrl, runtimeSettings.webhookSecret);
+    const result = await postWebhook(event, runtimeSettings.webhookUrl);
     const attempts = notification.attempts + 1;
     if (result.ok) {
       await db.update(notifications).set({ status: "delivered", attempts, responseSummary: result.summary, lastError: null, deliveredAt: new Date(), nextRetryAt: null, updatedAt: new Date() }).where(eq(notifications.id, notification.id));
