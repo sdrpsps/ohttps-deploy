@@ -1,7 +1,11 @@
 import { LoginForm } from "@/components/login-form";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { loadPocketIdConfig } from "@/lib/pocket-id";
 
-export default function Page() {
+export const dynamic = "force-dynamic";
+
+export default async function Page({ searchParams }: { searchParams: Promise<{ authError?: string }> }) {
+  const { authError } = await searchParams;
   return (
     <div className="relative flex min-h-svh w-full items-center justify-center overflow-hidden bg-background p-4 sm:p-8">
       {/* Top right theme toggle */}
@@ -17,7 +21,7 @@ export default function Page() {
       />
       <div className="pointer-events-none absolute -top-40 left-1/2 -z-10 size-[600px] -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
       <div className="relative z-10 w-full max-w-md">
-        <LoginForm />
+        <LoginForm pocketIdEnabled={Boolean(loadPocketIdConfig())} authError={Boolean(authError)} />
       </div>
     </div>
   );

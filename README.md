@@ -93,6 +93,31 @@ docker compose down
 
 按以下顺序执行。控制台首页的“首次配置向导”也会显示缺失项。
 
+### 可选：使用 Pocket ID 登录
+
+项目支持通过 Pocket ID 的 OIDC 授权码流程登录。只有指定的一个 Pocket ID 用户能够使用现有 `admin` 账号；不会开放注册，也不会按邮箱自动关联管理员。本地密码登录继续可用，Pocket ID 故障时可以用它恢复访问。
+
+1. 在 Pocket ID 的 **OIDC Clients** 中创建一个机密客户端，保存 Client ID 和 Client Secret。回调 URL 必须精确填写为 `https://certs.example.com/api/auth/callback/pocket-id`，其中域名替换为本项目的 `BETTER_AUTH_URL`。启用授权码流程和 PKCE，允许 `openid profile email` scopes；将客户端的允许用户限制为你的管理员。
+2. 从 Pocket ID 用户详情获取该管理员的用户 ID（OIDC `sub`），不要使用用户名、邮箱或客户端 ID 代替。
+3. 在 `.env` 中填写以下四项，Web 和 Worker 必须使用相同配置：
+
+   ```dotenv
+   POCKET_ID_ISSUER=https://id.example.com
+   POCKET_ID_CLIENT_ID=your-oidc-client-id
+   POCKET_ID_CLIENT_SECRET=your-oidc-client-secret
+   POCKET_ID_ADMIN_SUB=your-pocket-id-user-id
+   ```
+
+   `POCKET_ID_ISSUER` 必须是 Pocket ID 的准确 HTTPS issuer，不含末尾 `/`、查询参数或 URL 凭据。应用通过 `/.well-known/openid-configuration` 发现端点，要求授权、令牌和 JWKS 端点与 issuer 同源；ID token 需要包含 `email`。Client Secret 只保存在受限的运行环境中，不要提交 `.env`。四项必须一起配置；全部不配置时保持原来的密码登录。
+
+4. 使用包含本次改动的镜像，执行 `docker compose up -d --build --force-recreate web worker`，等待 Worker 初始化完成，再点击登录页的“使用 Pocket ID 登录”。Worker 会幂等地将指定的 issuer/sub 绑定到已有 `admin`，无需数据库结构迁移。空数据库仍会创建本地管理员并打印一次初始密码。
+
+认证会校验 state、PKCE、ID token 签名、issuer、audience、有效期、nonce 和指定的 `sub`；支持 RS256 和 ES256 签名。应用不请求离线权限，也不向浏览器提供 Pocket ID 的访问令牌。外部认证请求最长 10 秒，失败时显示通用错误。退出登录清除本应用的会话；Pocket ID 的会话仍可用于其他应用。
+
+更换 issuer/sub 或关闭 Pocket ID 时，同步更新 Web 与 Worker 配置并重启。Worker 会移除旧绑定并使现有管理员会话失效，需要重新登录。关闭时删除上述四项；保留本地密码以便恢复。Client Secret 轮换只需更新环境变量并重启两个服务。
+
+协议配置参考 [Pocket ID 客户端认证文档](https://pocket-id.org/docs/guides/oidc-client-authentication)；应用复用 [Better Auth Generic OAuth](https://better-auth.com/docs/plugins/generic-oauth) 的授权码、state 与 PKCE 流程。
+
 ### 1. 保存系统凭据与调度策略
 
 登录后打开侧边栏的**设置**：

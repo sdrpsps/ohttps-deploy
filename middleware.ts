@@ -62,7 +62,7 @@ export async function middleware(request: NextRequest) {
   // Better Auth 负责读取 cookie、查询会话并判断是否有效。
   try {
     const session = await auth.api.getSession({ headers: request.headers });
-    return session ? NextResponse.next() : unauthenticated();
+    return session?.user.username === "admin" ? NextResponse.next() : unauthenticated();
   } catch {
     // 无效或损坏的 cookie 也按未登录处理，不暴露内部错误。
     return unauthenticated();

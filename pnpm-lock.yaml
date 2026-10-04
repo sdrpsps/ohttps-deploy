@@ -59,6 +59,9 @@ importers:
       drizzle-orm:
         specifier: ^0.38.4
         version: 0.38.4(@libsql/client@0.15.9)(@types/react@19.2.18)(kysely@0.29.5)(react@19.2.8)
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
       lucide-react:
         specifier: ^1.37.0
         version: 1.37.0(react@19.2.8)

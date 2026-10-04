@@ -18,11 +18,32 @@ import { Badge } from "@/components/ui/badge";
 
 export function LoginForm({
   className,
+  pocketIdEnabled = false,
+  authError = false,
   ...props
-}: React.ComponentPropsWithoutRef<"div">) {
+}: React.ComponentPropsWithoutRef<"div"> & { pocketIdEnabled?: boolean; authError?: boolean }) {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [isPocketIdSubmitting, setIsPocketIdSubmitting] = useState(false);
+
+  async function signInPocketId() {
+    setError("");
+    setIsPocketIdSubmitting(true);
+    try {
+      const response = await fetch("/api/auth/sign-in/social", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "pocket-id", callbackURL: "/", errorCallbackURL: "/login?authError=1" }),
+      });
+      const data = await response.json();
+      if (!response.ok || typeof data.url !== "string") throw new Error();
+      window.location.assign(data.url);
+    } catch {
+      setError("Pocket ID 登录暂时不可用，请稍后重试或使用管理员密码");
+      setIsPocketIdSubmitting(false);
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,6 +92,15 @@ export function LoginForm({
         </CardHeader>
 
         <CardContent>
+          {pocketIdEnabled && (
+            <div className="mb-6 space-y-3">
+              <Button type="button" className="w-full gap-2" disabled={isSubmitting || isPocketIdSubmitting} onClick={signInPocketId}>
+                {isPocketIdSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+                使用 Pocket ID 登录
+              </Button>
+              <p className="text-center text-xs text-muted-foreground">或使用本地管理员密码</p>
+            </div>
+          )}
           <form onSubmit={submit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="username" className="text-xs font-medium text-foreground">
@@ -122,18 +152,18 @@ export function LoginForm({
               </div>
             </div>
 
-            {error && (
+            {(error || authError) && (
               <div
                 className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
                 role="alert"
                 aria-live="polite"
               >
                 <AlertCircle className="size-4 shrink-0" />
-                <span>{error}</span>
+                <span>{error || "Pocket ID 登录未完成，请确认使用已授权的管理员账号后重试"}</span>
               </div>
             )}
 
-            <Button type="submit" className="w-full gap-2 shadow-sm font-medium" disabled={isSubmitting}>
+            <Button type="submit" className="w-full gap-2 shadow-sm font-medium" disabled={isSubmitting || isPocketIdSubmitting}>
               {isSubmitting ? (
                 <>
                   <LoaderCircle className="size-4 animate-spin" />
