@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useId, useState } from "react";
 import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, LoaderCircle, Lock, ShieldCheck, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,8 @@ export function LoginForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isPocketIdSubmitting, setIsPocketIdSubmitting] = useState(false);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const passwordFormId = useId();
 
   async function signInPocketId() {
     setError("");
@@ -93,15 +95,36 @@ export function LoginForm({
 
         <CardContent>
           {pocketIdEnabled && (
-            <div className="mb-6 space-y-3">
+            <div className="space-y-3">
               <Button type="button" className="w-full gap-2" disabled={isSubmitting || isPocketIdSubmitting} onClick={signInPocketId}>
                 {isPocketIdSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
-                使用 Pocket ID 登录
+                使用通行密钥登录
               </Button>
-              <p className="text-center text-xs text-muted-foreground">或使用本地管理员密码</p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="w-full text-xs text-muted-foreground"
+                disabled={isSubmitting || isPocketIdSubmitting}
+                aria-expanded={showPasswordForm}
+                aria-controls={passwordFormId}
+                onClick={() => setShowPasswordForm((visible) => !visible)}
+              >
+                {showPasswordForm ? "收起密码登录" : "使用管理员密码登录"}
+              </Button>
             </div>
           )}
-          <form onSubmit={submit} className="space-y-4">
+          {(error || authError) && (
+            <div
+              className="mb-4 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+              role="alert"
+              aria-live="polite"
+            >
+              <AlertCircle className="size-4 shrink-0" />
+              <span>{error || "Pocket ID 登录未完成，请确认使用已授权的管理员账号后重试"}</span>
+            </div>
+          )}
+          <form id={passwordFormId} hidden={pocketIdEnabled && !showPasswordForm} onSubmit={submit} className={cn("space-y-4", pocketIdEnabled && "mt-4")}>
             <div className="space-y-2">
               <Label htmlFor="username" className="text-xs font-medium text-foreground">
                 管理员用户名
@@ -151,17 +174,6 @@ export function LoginForm({
                 </button>
               </div>
             </div>
-
-            {(error || authError) && (
-              <div
-                className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-                role="alert"
-                aria-live="polite"
-              >
-                <AlertCircle className="size-4 shrink-0" />
-                <span>{error || "Pocket ID 登录未完成，请确认使用已授权的管理员账号后重试"}</span>
-              </div>
-            )}
 
             <Button type="submit" className="w-full gap-2 shadow-sm font-medium" disabled={isSubmitting || isPocketIdSubmitting}>
               {isSubmitting ? (

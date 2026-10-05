@@ -7,6 +7,7 @@ import { renderToString } from "react-dom/server";
 import { useForm } from "react-hook-form";
 import { Form, FormLabel } from "../app/components/ui/form";
 import { Label } from "../app/components/ui/label";
+import { LoginForm } from "../app/components/login-form";
 
 // 1. Verify that FormLabel throws when used outside of FormField
 assert.throws(
@@ -62,5 +63,16 @@ const consoleLayoutContent = fs.readFileSync(
 );
 assert.ok(consoleLayoutContent.includes("useTransition"), "Console navigation must use a transition state");
 assert.ok(consoleLayoutContent.includes("aria-busy={isNavigating}"), "Console content must expose its navigation loading state");
+
+// Pocket ID is the default entry; password recovery remains available without an IdP.
+const pocketLogin = renderToString(React.createElement(LoginForm, { pocketIdEnabled: true, authError: true }));
+assert.ok(pocketLogin.includes("使用通行密钥登录"));
+assert.ok(pocketLogin.includes('aria-expanded="false"'));
+assert.match(pocketLogin, /<form[^>]* hidden=""/);
+assert.ok(pocketLogin.indexOf('role="alert"') < pocketLogin.indexOf("<form"), "OAuth errors must stay visible while the password form is hidden");
+const passwordLogin = renderToString(React.createElement(LoginForm));
+assert.ok(!passwordLogin.includes("使用通行密钥登录"));
+assert.doesNotMatch(passwordLogin, /<form[^>]* hidden=/);
+assert.ok(passwordLogin.includes('name="password"'));
 
 console.log("UI component contract tests passed");
