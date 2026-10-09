@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db";
 import { certificateTargets, certificates, servers, settings } from "@/db/schema";
+import { loadRuntimeSettings } from "@/lib/runtime-settings";
 import { recordAudit } from "@/lib/audit";
 import { isCertificateDomain } from "@/domain/deployment-path";
 
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
   }
 
   const id = randomUUID();
-  await db.insert(certificates).values({ id, ...certData });
+  await db.insert(certificates).values({ id, ...certData, renewBeforeDays: certData.renewBeforeDays ?? (await loadRuntimeSettings()).renewBeforeDays });
   if (serverIds !== undefined) {
     const uniqueIds = [...new Set(serverIds)];
     if (uniqueIds.length > 0) {

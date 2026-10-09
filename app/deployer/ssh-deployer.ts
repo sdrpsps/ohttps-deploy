@@ -101,20 +101,33 @@ export class SSHDeployer implements Deployer {
 
       await options.onProgress?.("uploading", `正在通过 SFTP 上传证书文件至临时目录 (${items.length} 组证书)...`);
       await this.exec(client, `mkdir -p ${shellQuote(tempRoot)}`, commandOptions);
-      await new Promise<void>((resolve, reject) => client.sftp((error, sftp) => {
-        if (error || !sftp) return reject(error ?? new Error("sftp unavailable"));
-        let remaining = items.length * 2;
-        let failed = false;
-        const done = (putError?: Error | null) => {
-          if (putError && !failed) { failed = true; return reject(putError); }
-          remaining -= 1;
-          if (remaining === 0 && !failed) resolve();
+      await new Promise<void>((resolve, reject) => {
+        let finished = false;
+        const finish = (error?: Error | null) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          options.signal?.removeEventListener("abort", abort);
+          error ? reject(error) : resolve();
         };
-        for (const item of items) {
-          sftp.fastPut(item.m.certificatePath, item.tempCert, done);
-          sftp.fastPut(item.m.privateKeyPath, item.tempKey, done);
-        }
-      }));
+        const abort = () => finish(new Error("cancelled"));
+        const timer = setTimeout(() => finish(new Error("SFTP upload timed out")), target.timeoutSeconds * 1000);
+        options.signal?.addEventListener("abort", abort, { once: true });
+        if (options.signal?.aborted) { abort(); return; }
+        client.sftp((error, sftp) => {
+          if (finished) return;
+          if (error || !sftp) { finish(error ?? new Error("sftp unavailable")); return; }
+          let remaining = items.length * 2;
+          const done = (putError?: Error | null) => {
+            if (putError) { finish(putError); return; }
+            if (--remaining === 0) finish();
+          };
+          for (const item of items) {
+            sftp.fastPut(item.m.certificatePath, item.tempCert, done);
+            sftp.fastPut(item.m.privateKeyPath, item.tempKey, done);
+          }
+        });
+      });
       const chmodCmd = items.map((item) => `chmod 0644 ${shellQuote(item.tempCert)} && chmod 0600 ${shellQuote(item.tempKey)} && test -s ${shellQuote(item.tempCert)} && test -s ${shellQuote(item.tempKey)}`).join(" && ");
       await this.exec(client, chmodCmd, commandOptions);
       await options.onProgress?.("uploaded", "证书文件传输完成，权限已设置为 0644/0600");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { SSHDeployer } from "../app/deployer";
 
-type Mode = "config-failure" | "timeout";
+type Mode = "config-failure" | "timeout" | "upload-timeout";
 
 async function run() {
   const configFailure = await deployWith("config-failure");
@@ -17,6 +17,10 @@ async function run() {
   assert.equal(timeout.result.ok, false);
   assert.match(timeout.result.error ?? "", /remote command timed out/);
   assert.equal(timeout.destroyed, true);
+
+  const uploadTimeout = await deployWith("upload-timeout");
+  assert.equal(uploadTimeout.result.ok, false);
+  assert.match(uploadTimeout.result.error ?? "", /SFTP upload timed out/);
 
   const multiDeploy = await deployMulti();
   assert.equal(multiDeploy.result.ok, true);
@@ -82,7 +86,7 @@ async function deployWith(mode: Mode) {
     once(event: string, listener: () => void) { listeners[event] = listener; return this; },
     connect() { listeners.ready?.(); },
     sftp(callback: (error: null, sftp: { fastPut: (_source: string, _destination: string, done: (error?: Error) => void) => void }) => void) {
-      callback(null, { fastPut: (_source, _destination, done) => done() });
+      callback(null, { fastPut: (_source, _destination, done) => { if (mode !== "upload-timeout") done(); } });
     },
     exec(command: string, callback: (error: null, stream: { stderr: { on: () => void }; on: (event: string, listener: (code: number) => void) => void; destroy: () => void }) => void) {
       commands.push(command);

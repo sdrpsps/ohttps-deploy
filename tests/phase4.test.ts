@@ -6,7 +6,9 @@ const now = new Date("2026-08-31T00:00:00Z");
 assert.equal(shouldScheduleSync({ expiresAt: new Date("2026-09-10T00:00:00Z"), lastCheckedAt: new Date("2026-08-30T23:30:00Z"), now, renewBeforeDays: 20, minimumIntervalSeconds: 3600 }), false);
 assert.equal(shouldScheduleSync({ expiresAt: new Date("2026-09-10T00:00:00Z"), lastCheckedAt: new Date("2026-08-30T22:00:00Z"), now, renewBeforeDays: 20, minimumIntervalSeconds: 3600 }), true);
 assert.equal(shouldScheduleSync({ expiresAt: new Date("2026-10-10T00:00:00Z"), now, renewBeforeDays: 20, minimumIntervalSeconds: 3600 }), false);
-assert.equal(shouldScheduleSync({ expiresAt: new Date("2026-09-10T00:00:00Z"), now, renewBeforeDays: 20, minimumIntervalSeconds: 3600, syncedForCurrentVersion: true }), false);
+assert.equal(shouldScheduleSync({ expiresAt: new Date("2026-09-10T00:00:00Z"), now, renewBeforeDays: 20, minimumIntervalSeconds: 3600, lastCheckedAt: new Date("2026-08-29T00:00:00Z") }), true);
+// Bootstrap and lost cache must be repaired without a browser session.
+assert.equal(shouldScheduleSync({ now, renewBeforeDays: 20, minimumIntervalSeconds: 3600 }), true);
 async function run() {
   const event = { eventId: "event-1", eventType: "deployment.failed", occurredAt: "2026-08-31T00:00:00.000Z", object: { type: "deployment", id: "deployment-1" }, status: "failure" as const, errorSummary: "reload failed" };
   assert.deepEqual(toBarkPayload(event), { title: "ohttps-deploy · 证书部署失败", body: "事件：deployment.failed\n对象：deployment/deployment-1\n错误：reload failed", group: "ohttps-deploy" });

@@ -12,7 +12,7 @@
 - Web/API 基于 Next.js App Router 的 Node.js Runtime；SQLite + Drizzle 是默认持久化方案。`web` 与 `worker` 共享数据目录，Worker lease 保证只有一个 Worker 执行队列与定时任务。
 - 证书版本保存为不可变目录，`current` 指针原子切换；私钥 `0600`、证书链 `0644`。本地 X.509 `NotAfter` 是有效期的依据，ohttps 的 `expiredTime` 仅作辅助字段。
 - SSH push 是唯一部署模式。所有目标服务器共用一把 SSH 私钥；每台服务器必须保存并校验 SHA-256 主机指纹。部署先执行 `nginx -t`，上传到临时目录，再原子替换、reload、可选健康检查；替换后的失败会尝试回滚。
-- 自动扫描只读取本地证书。默认剩余 20 天才同步 ohttps；每个本地证书版本至多同步一次，并受最小调用间隔和每日调用上限保护。新版本会按已启用策略自动创建部署任务。
+- 自动扫描只读取本地证书。默认剩余 20 天才同步 ohttps；首次缓存缺失时自动获取；续期窗口内持续检查上游，并受每证书最小调用间隔和每日调用上限保护（成功返回旧版本或失败都不会永久停止续期）。当前版本按已启用策略自动补齐部署，失败目标每小时重试，Worker 接手租约后恢复中断任务。
 - Webhook 使用 JSON `POST`，并发送 `x-ohttps-deploy-signature: sha256=<HMAC-SHA256>` 与 `x-ohttps-deploy-event-id`。事件不包含私钥或完整 PEM；失败投递指数退避，且不覆盖同步/部署任务的原始状态。
 - Docker Compose 的持久目录默认是 `./data`，包含数据库、证书版本和归档日志。数据库备份等同于 ohttps、SSH 和 Webhook 凭据备份。
 
