@@ -1,8 +1,12 @@
 node_modules
 .next
 .git
-.env
+.env*
 data
 certs
 logs
 
+
+.pnpm-store
+.DS_Store
+tsconfig.tsbuildinfo
