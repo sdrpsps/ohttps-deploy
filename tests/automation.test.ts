@@ -31,6 +31,8 @@ async function run() {
       return { fullChainCerts: await readFile(certPath, "utf8"), certKey: await readFile(keyPath, "utf8"), expiredTime: "ignored" };
     };
     const old = await generate(30), renewed = await generate(90);
+    // OpenSSL sets NotBefore at generation time; slow CI hosts may cross a second.
+    clock = Date.now();
     let payload = old, upstreamFails = false, calls = 0;
     workerAdapters.ohttpsClient = () => ({ getCertificate: async () => { calls++; if (upstreamFails) throw new Error("temporary network failure"); return payload; } });
     const deployed: string[] = [];
