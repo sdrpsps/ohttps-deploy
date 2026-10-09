@@ -202,7 +202,7 @@ export function ServerPanel({
 
           {/* Servers Table */}
           <div className="rounded-lg border border-border/80 overflow-hidden">
-            <Table className="min-w-[680px]">
+            <Table className="min-w-[960px]">
               <TableHeader className="bg-muted/30">
                 <TableRow>
                   <TableHead className="w-[25%] text-xs font-semibold">服务器名称</TableHead>
@@ -292,15 +292,15 @@ function ServerRow({
   return (
     <TableRow className="transition-colors hover:bg-muted/30">
       {/* 1. Name & Tags */}
-      <TableCell>
+      <TableCell className="min-w-[200px]">
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-xs text-foreground">{server.name}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="max-w-[240px] break-words font-semibold text-xs text-foreground">{server.name}</span>
             <Badge variant="outline" className="text-[10px] font-normal py-0 h-4 text-muted-foreground">
               SSH 节点
             </Badge>
           </div>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="whitespace-nowrap text-[11px] text-muted-foreground">
             超时：{server.timeoutSeconds}s · 校验：{server.validationCommand ? "已配" : "默认"}
           </p>
         </div>

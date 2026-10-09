@@ -544,8 +544,8 @@ function CertificateRow({
       {/* 1. Name & ID */}
       <TableCell>
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-xs text-foreground">{certificate.name}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="max-w-[240px] break-words font-semibold text-xs text-foreground">{certificate.name}</span>
             {certificate.currentVersionId && (
               <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/5 text-[9px] text-emerald-600 dark:text-emerald-400 font-mono py-0 h-4">
                 版本已就绪
@@ -589,7 +589,7 @@ function CertificateRow({
           <div className="text-xs font-mono text-foreground">
             {certificate.expiresAt ? formatDate(certificate.expiresAt) : "待首次同步"}
           </div>
-          <div className="flex items-center gap-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
             {isExpired ? (
               <Badge variant="destructive" className="text-[10px] py-0 h-4">
                 已过期
@@ -613,7 +613,7 @@ function CertificateRow({
       </TableCell>
 
       {/* 4. Status Badge */}
-      <TableCell>
+      <TableCell className="whitespace-nowrap">
         {isDisabled ? (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="size-1.5 rounded-full bg-neutral-400" />

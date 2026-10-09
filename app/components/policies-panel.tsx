@@ -243,7 +243,7 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
                             </div>
                           </div>
                           <div className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground/80 bg-muted/40 px-2 py-0.5 rounded max-w-fit">
-                            <span>路径:</span>
+                            <span className="shrink-0 whitespace-nowrap">路径:</span>
                             <span className="text-foreground/80">/etc/nginx/ssl/{certificate.domain}/</span>
                           </div>
                         </div>
@@ -291,15 +291,15 @@ export function PoliciesPanel({ certificates, servers }: PoliciesPanelProps) {
                       </TableCell>
 
                       {/* 3. Status */}
-                      <TableCell>
+                      <TableCell className="whitespace-nowrap">
                         {count > 0 ? (
                           <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                            <span className="size-1.5 rounded-full bg-emerald-500" />
+                            <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
                             自动推送
                           </span>
                         ) : (
                           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <span className="size-1.5 rounded-full bg-neutral-400" />
+                            <span className="size-1.5 shrink-0 rounded-full bg-neutral-400" />
                             仅本地
                           </span>
                         )}

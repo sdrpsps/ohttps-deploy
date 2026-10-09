@@ -70,7 +70,7 @@ export function ActivityMetrics({
   }, [deployments, syncJobs, auditEvents]);
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-4">
       {/* 1. 异常预警卡片 */}
       <Card
         className={
@@ -79,10 +79,10 @@ export function ActivityMetrics({
             : "border-border/60 bg-card"
         }
       >
-        <CardContent className="flex items-center justify-between p-4">
-          <div className="space-y-1">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="min-w-0 space-y-1">
             <p className="text-xs font-medium text-muted-foreground">异常 / 失败任务</p>
-            <div className="flex items-baseline gap-2">
+            <div className="flex flex-wrap items-baseline gap-2">
               <span
                 className={`text-2xl font-bold tracking-tight ${
                   stats.totalFailed > 0 ? "text-destructive" : "text-foreground"
@@ -90,7 +90,7 @@ export function ActivityMetrics({
               >
                 {stats.totalFailed}
               </span>
-              <span className="text-xs text-muted-foreground">项需关注</span>
+              <span className="whitespace-nowrap text-xs text-muted-foreground">项需关注</span>
             </div>
           </div>
           {stats.totalFailed > 0 ? (
@@ -104,7 +104,7 @@ export function ActivityMetrics({
               查看异常
             </Button>
           ) : (
-            <div className="rounded-full bg-emerald-500/10 p-2 text-emerald-600">
+            <div className="shrink-0 rounded-full bg-emerald-500/10 p-2 text-emerald-600">
               <CheckCircle2 className="size-5" />
             </div>
           )}
@@ -113,14 +113,14 @@ export function ActivityMetrics({
 
       {/* 2. 正在执行卡片 */}
       <Card className="border-border/60 bg-card">
-        <CardContent className="flex items-center justify-between p-4">
-          <div className="space-y-1">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="min-w-0 space-y-1">
             <p className="text-xs font-medium text-muted-foreground">运行中 / 排队中</p>
-            <div className="flex items-baseline gap-2">
+            <div className="flex flex-wrap items-baseline gap-2">
               <span className="text-2xl font-bold tracking-tight text-foreground">
                 {stats.totalActive}
               </span>
-              <span className="text-xs text-muted-foreground">个后台任务</span>
+              <span className="whitespace-nowrap text-xs text-muted-foreground">个后台任务</span>
             </div>
           </div>
           {stats.totalActive > 0 ? (
@@ -143,25 +143,27 @@ export function ActivityMetrics({
 
       {/* 3. 24 小时执行量与成功率 */}
       <Card className="border-border/60 bg-card">
-        <CardContent className="flex items-center justify-between p-4">
-          <div className="space-y-1">
+        <CardContent className="flex items-center justify-between gap-3 p-4">
+          <div className="min-w-0 space-y-1">
             <p className="text-xs font-medium text-muted-foreground">近 24 小时执行</p>
-            <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-foreground">
-                {stats.total24h}
-              </span>
-              <span className="text-xs text-muted-foreground">次任务</span>
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <div className="flex shrink-0 items-baseline gap-2">
+                <span className="text-2xl font-bold tracking-tight text-foreground">
+                  {stats.total24h}
+                </span>
+                <span className="whitespace-nowrap text-xs text-muted-foreground">次任务</span>
+              </div>
               {stats.total24h > 0 && (
                 <Badge
                   variant={stats.successRate === 100 ? "default" : "destructive"}
-                  className="ml-1 text-[11px] font-normal"
+                  className="text-[11px] font-normal"
                 >
                   {stats.successRate}% 成功
                 </Badge>
               )}
             </div>
           </div>
-          <div className="rounded-full bg-primary/10 p-2 text-primary">
+          <div className="shrink-0 rounded-full bg-primary/10 p-2 text-primary">
             <Zap className="size-5" />
           </div>
         </CardContent>
@@ -169,7 +171,7 @@ export function ActivityMetrics({
 
       {/* 4. 最近操作审计 */}
       <Card className="border-border/60 bg-card">
-        <CardContent className="flex items-center justify-between p-4">
+        <CardContent className="flex items-center justify-between gap-3 p-4">
           <div className="space-y-1 min-w-0 pr-2">
             <p className="text-xs font-medium text-muted-foreground">最近运维操作</p>
             {stats.latestAudit ? (

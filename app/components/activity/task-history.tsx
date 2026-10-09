@@ -217,7 +217,7 @@ export function TaskHistory({
             </CardDescription>
           </div>
           {/* 类型快捷切换 */}
-          <div className="flex rounded-lg border bg-muted/60 p-1 text-xs">
+          <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/60 p-1 text-xs [&>button]:whitespace-nowrap">
             <button
               type="button"
               className={`rounded-md px-3 py-1 font-medium transition-all ${
@@ -347,12 +347,12 @@ export function TaskHistory({
 
         {/* 任务表格 */}
         <div className="rounded-md border overflow-hidden">
-          <Table>
+          <Table className="min-w-[1000px]">
             <TableHeader className="bg-muted/40">
               <TableRow>
                 <TableHead className="w-[85px]">类型</TableHead>
-                <TableHead>任务对象 / 证书</TableHead>
-                <TableHead>目标节点 / 阶段</TableHead>
+                <TableHead className="min-w-[200px]">任务对象 / 证书</TableHead>
+                <TableHead className="min-w-[160px]">目标节点 / 阶段</TableHead>
                 <TableHead>触发来源</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead>耗时 / 时间</TableHead>
@@ -427,7 +427,7 @@ function TaskRow({
       </TableCell>
 
       {/* 任务对象 / 证书 */}
-      <TableCell>
+      <TableCell className="max-w-[320px] break-words">
         <div className="font-medium text-xs text-foreground flex items-center gap-1.5 flex-wrap">
           <span>{task.title ?? task.certificateName ?? "未命名任务"}</span>
           {task.rawDeployment?.certificates && task.rawDeployment.certificates.length > 1 && (
@@ -441,7 +441,7 @@ function TaskRow({
             {task.rawDeployment.certificates.map((c) => c.domain).join(", ")}
           </div>
         ) : task.domain ? (
-          <div className="text-[11px] text-muted-foreground font-mono">
+          <div className="break-all text-[11px] text-muted-foreground font-mono">
             {task.domain}
           </div>
         ) : null}
@@ -464,9 +464,11 @@ function TaskRow({
                   <Badge
                     key={sid}
                     variant="secondary"
-                    className="text-[10px] font-normal px-1.5 py-0"
+                    className="max-w-[160px] text-[10px] font-normal px-1.5 py-0"
                   >
-                    {serverMap.get(sid) ?? sid.slice(0, 8)}
+                    <span className="truncate" title={serverMap.get(sid) ?? sid}>
+                      {serverMap.get(sid) ?? sid.slice(0, 8)}
+                    </span>
                   </Badge>
                 ))}
               </div>
@@ -482,7 +484,7 @@ function TaskRow({
       </TableCell>
 
       {/* 触发来源 */}
-      <TableCell className="text-xs text-muted-foreground">
+      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
         {triggerLabels[task.trigger] ?? task.trigger}
       </TableCell>
 
@@ -503,7 +505,7 @@ function TaskRow({
       </TableCell>
 
       {/* 耗时与时间 */}
-      <TableCell className="text-xs">
+      <TableCell className="whitespace-nowrap text-xs">
         <div className="text-foreground">{formatActivityDate(task.createdAt)}</div>
         {duration && (
           <div className="text-[11px] text-muted-foreground font-mono">
