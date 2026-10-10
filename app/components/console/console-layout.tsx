@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, KeyRound, LogOut, Menu, Settings2, ShieldChe
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -28,6 +29,7 @@ import type { DashboardSection, NavigationItem } from "./types";
 
 type ConsoleLayoutProps = {
   userName: string;
+  userImage?: string | null;
   localAdmin: boolean;
   section: DashboardSection;
   navigation: NavigationItem[];
@@ -39,6 +41,7 @@ type ConsoleLayoutProps = {
 
 export function ConsoleLayout({
   userName,
+  userImage,
   localAdmin,
   section,
   navigation,
@@ -196,9 +199,12 @@ export function ConsoleLayout({
                   className="flex items-center gap-1.5 rounded-full border border-border/80 bg-muted/20 px-2.5 py-1 text-xs transition-colors hover:bg-muted/50 focus:outline-none focus:ring-1 focus:ring-ring"
                   aria-label="管理员个人菜单"
                 >
-                  <div className="flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
-                    <User className="size-3" />
-                  </div>
+                  <Avatar className="size-5">
+                    <AvatarImage src={userImage ?? undefined} alt={`${userName}的头像`} referrerPolicy="no-referrer" />
+                    <AvatarFallback className="bg-primary text-primary-foreground">
+                      <User className="size-3" />
+                    </AvatarFallback>
+                  </Avatar>
                   <span className="font-mono text-xs font-semibold">{userName}</span>
                   <ChevronDown className="size-3 text-muted-foreground/60" />
                 </button>

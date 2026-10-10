@@ -3,10 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { loadPocketIdConfig } from "../app/lib/pocket-id";
+import { loadPocketIdConfig, pocketIdProfileImage } from "../app/lib/pocket-id";
 
 async function run() {
   assert.equal(loadPocketIdConfig({}), undefined);
+  assert.equal(pocketIdProfileImage("https://id.example.test/avatar.png"), "https://id.example.test/avatar.png");
+  for (const picture of [undefined, null, 123, "invalid", "http://id.example.test/avatar.png", "javascript:alert(1)", "data:image/png;base64,fake", "https://user:password@id.example.test/avatar.png"]) {
+    assert.equal(pocketIdProfileImage(picture), undefined);
+  }
   assert.throws(() => loadPocketIdConfig({ POCKET_ID_ISSUER: "https://id.example.test" }), /requires/);
   const env = { POCKET_ID_ISSUER: "https://id.example.test/", POCKET_ID_CLIENT_ID: "test-client", POCKET_ID_CLIENT_SECRET: "fake-client-secret" };
   assert.equal(loadPocketIdConfig(env)?.issuer, "https://id.example.test");
@@ -43,7 +47,7 @@ async function run() {
     assert.equal(body.get("redirect_uri"), "https://certs.example.test/api/auth/callback/pocket-id");
     assert.ok(body.get("code_verifier"));
     if (tokenFailure) return Response.json({ error_description: "fake-upstream-secret" }, { status: 400 });
-    const token = await new SignJWT({ name: "Sunny", email: "admin@example.test", email_verified: true, nonce, ...claims })
+    const token = await new SignJWT({ picture: "https://id.example.test/avatar.png", name: "Sunny", email: "admin@example.test", email_verified: true, nonce, ...claims })
       .setProtectedHeader({ alg: "RS256", kid: "test-key" }).setIssuer(String(claims.iss ?? "https://id.example.test"))
       .setAudience(String(claims.aud ?? "test-client")).setSubject(String(claims.sub ?? "test-admin-sub"))
       .setIssuedAt().setExpirationTime(claims.exp === 1 ? 1 : "5m").sign(badSignature ? wrongKey : privateKey);
@@ -92,17 +96,19 @@ async function run() {
     const session = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(successful) }) });
     assert.ok(session);
     assert.equal(session.user.name, "Sunny");
+    assert.equal(session.user.image, "https://id.example.test/avatar.png");
     assert.equal(session.user.email, "admin@example.test");
     assert.notEqual(session.user.username, "admin");
     assert.equal(await isAuthorizedUser(session.user), true);
     // Each allowed Pocket ID subject gets an independent user and session.
-    claims = { sub: "friend-sub", email: "friend@example.test", name: "Friend" };
+    claims = { sub: "friend-sub", email: "friend@example.test", name: "Friend", picture: null };
     const friend = await login();
     assert.equal(new URL(friend.headers.get("location")!, "https://certs.example.test").pathname, "/");
     const friendSession = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(friend) }) });
     assert.notEqual(friendSession?.user.id, session.user.id);
     assert.notEqual(friendSession?.user.username, "admin");
     assert.equal(friendSession?.user.name, "Friend");
+    assert.equal(friendSession?.user.image, null);
     assert.equal(friendSession?.user.email, "friend@example.test");
     assert.equal((await db.select().from(schema.authAccounts)).length, 3);
     assert.equal((await db.select().from(schema.authUsers)).length, 3);
@@ -143,9 +149,11 @@ async function run() {
     assert.equal(account.accountId, "test-admin-sub");
     assert.equal(account.issuer, "https://id.example.test#client=test-client");
     // Re-login resolves the same subject rather than creating a new user.
+    claims = { picture: "https://id.example.test/updated-avatar.png" };
     const repeat = await login();
     const repeatSession = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(repeat) }) });
     assert.equal(repeatSession?.user.id, session.user.id);
+    assert.equal(repeatSession?.user.image, "https://id.example.test/updated-avatar.png");
     const { recordAudit } = await import("../app/lib/audit");
     await recordAudit(new Request("https://certs.example.test/api/settings", { headers: { cookie: cookieHeader(friend) } }), "settings.updated", "settings");
     const [audit] = await db.select().from(schema.auditEvents);

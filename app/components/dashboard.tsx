@@ -62,7 +62,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const sessionQuery = useQuery({ queryKey: ["current-session"], queryFn: async () => {
     const response = await fetch("/api/auth/get-session");
     if (!response.ok) throw new Error("无法获取登录身份");
-    return await response.json() as { user: { name: string; username?: string | null } } | null;
+    return await response.json() as { user: { name: string; image?: string | null; username?: string | null } } | null;
   } });
   const currentUser = sessionQuery.data?.user;
   const canChangePassword = currentUser?.username === "admin";
@@ -450,6 +450,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     <>
       <ConsoleLayout
         userName={currentUser?.name ?? "已登录用户"}
+        userImage={currentUser?.image}
         localAdmin={canChangePassword}
         section={section}
         navigation={navigation}

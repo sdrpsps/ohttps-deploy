@@ -25,6 +25,15 @@ export function pocketIdAccountIssuer(config: PocketIdConfig) {
   return `${config.issuer}#client=${encodeURIComponent(config.clientId)}`
 }
 
+export function pocketIdProfileImage(value: unknown) {
+  if (typeof value !== "string") return undefined
+  try {
+    const url = new URL(value)
+    if (url.protocol !== "https:" || url.username || url.password) return undefined
+    return url.href
+  } catch { return undefined }
+}
+
 const discoverySchema = z.object({
   issuer: z.string(),
   authorization_endpoint: z.string().url(),
@@ -79,6 +88,7 @@ export function pocketIdPlugin(config: PocketIdConfig, fetcher: typeof fetch = f
     scopes: ["openid", "profile", "email"],
     pkce: true,
     disableSignUp: false,
+    overrideUserInfo: true,
     disableProviderLogout: true,
     async getToken({ code, redirectURI, codeVerifier }) {
       try {
@@ -120,7 +130,7 @@ export function pocketIdPlugin(config: PocketIdConfig, fetcher: typeof fetch = f
           if ((payload.azp !== undefined && payload.azp !== config.clientId) || (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== config.clientId)) return null
           if (payload.nonce !== tokens.expectedIdTokenNonce || typeof payload.sub !== "string" || !payload.sub.trim() || typeof payload.email !== "string" || !payload.email) return null
           const name = [payload.name, payload.preferred_username, payload.email].find((value) => typeof value === "string" && value.trim()) as string
-          return { user: { email: payload.email, emailVerified: payload.email_verified === true, name }, data: payload }
+          return { user: { email: payload.email, emailVerified: payload.email_verified === true, name, image: pocketIdProfileImage(payload.picture) }, data: payload }
         } catch { return null }
       }
       return result
