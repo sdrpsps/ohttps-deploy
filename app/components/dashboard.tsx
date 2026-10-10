@@ -59,6 +59,14 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [syncTaskId, setSyncTaskId] = useState<string | null>(null);
 
+  const sessionQuery = useQuery({ queryKey: ["current-session"], queryFn: async () => {
+    const response = await fetch("/api/auth/get-session");
+    if (!response.ok) throw new Error("无法获取登录身份");
+    return await response.json() as { user: { name: string; username?: string | null } } | null;
+  } });
+  const currentUser = sessionQuery.data?.user;
+  const canChangePassword = currentUser?.username === "admin";
+
   const certificatesQuery = useQuery({ queryKey: queryKeys.certificates, queryFn: () => getApiData<Certificate[]>("/api/certificates"), enabled: ["overview", "certificates", "policies", "activity"].includes(section) });
   const serversQuery = useQuery({ queryKey: queryKeys.servers, queryFn: () => getApiData<ManagedServer[]>("/api/servers"), enabled: ["overview", "servers", "policies", "activity"].includes(section) });
   const settingsQuery = useQuery({ queryKey: queryKeys.settings, queryFn: () => getApiData<SettingsSummary>("/api/settings") });
@@ -441,11 +449,13 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   return (
     <>
       <ConsoleLayout
+        userName={currentUser?.name ?? "已登录用户"}
+        localAdmin={canChangePassword}
         section={section}
         navigation={navigation}
         workerOnline={workerOnline}
         onSettings={() => setSettingsDialogOpen(true)}
-        onChangePassword={() => setChangePasswordDialogOpen(true)}
+        onChangePassword={canChangePassword ? () => setChangePasswordDialogOpen(true) : undefined}
       >
         <div className="space-y-8">
           {section === "overview" && settings && (
@@ -518,7 +528,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onConfigureSshKey={() => {
           setKeyDialogOpen(true);
         }}
-        onChangePassword={() => setChangePasswordDialogOpen(true)}
+        onChangePassword={canChangePassword ? () => setChangePasswordDialogOpen(true) : undefined}
       />
 
       <SshKeyDialog

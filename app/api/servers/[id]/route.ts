@@ -30,11 +30,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   try { if (parsed.data.validationCommand) validateCommand(parsed.data.validationCommand); if (parsed.data.reloadCommand) validateCommand(parsed.data.reloadCommand); if (parsed.data.healthCheckCommand) validateCommand(parsed.data.healthCheckCommand); } catch (error) { return NextResponse.json({ error: { code: "INVALID_COMMAND", message: (error as Error).message } }, { status: 400 }); }
   const [server] = await db.update(servers).set({ ...parsed.data, updatedAt: new Date() }).where(eq(servers.id, id)).returning();
   if (!server) return NextResponse.json({ error: { code: "NOT_FOUND", message: "server not found" } }, { status: 404 });
-  await recordAudit("server.updated", "server", id);
+  await recordAudit(request, "server.updated", "server", id);
   return NextResponse.json({ data: server });
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const [server] = await db.select({ id: servers.id }).from(servers).where(eq(servers.id, id)).limit(1);
   if (!server) return NextResponse.json({ error: { code: "NOT_FOUND", message: "server not found" } }, { status: 404 });
@@ -48,7 +48,7 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
 
   await db.delete(certificateTargets).where(eq(certificateTargets.serverId, id));
   await db.delete(servers).where(eq(servers.id, id));
-  await recordAudit("server.deleted", "server", id);
+  await recordAudit(request, "server.deleted", "server", id);
   return new NextResponse(null, { status: 204 });
 }
 

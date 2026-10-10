@@ -239,7 +239,7 @@ export async function POST(request: Request) {
     }))
   );
 
-  await recordAudit("deployment.created", "deployment", id);
+  await recordAudit(request, "deployment.created", "deployment", id);
   return NextResponse.json({
     data: {
       id,

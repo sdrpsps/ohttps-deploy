@@ -8,8 +8,10 @@ import { loadPocketIdConfig } from "../app/lib/pocket-id";
 async function run() {
   assert.equal(loadPocketIdConfig({}), undefined);
   assert.throws(() => loadPocketIdConfig({ POCKET_ID_ISSUER: "https://id.example.test" }), /requires/);
-  const env = { POCKET_ID_ISSUER: "https://id.example.test/", POCKET_ID_CLIENT_ID: "test-client", POCKET_ID_CLIENT_SECRET: "fake-client-secret", POCKET_ID_ADMIN_SUB: "test-admin-sub" };
+  const env = { POCKET_ID_ISSUER: "https://id.example.test/", POCKET_ID_CLIENT_ID: "test-client", POCKET_ID_CLIENT_SECRET: "fake-client-secret" };
   assert.equal(loadPocketIdConfig(env)?.issuer, "https://id.example.test");
+  assert.deepEqual(loadPocketIdConfig({ ...env, POCKET_ID_ADMIN_SUB: "legacy-user-id" }), loadPocketIdConfig(env));
+  assert.equal(loadPocketIdConfig({ POCKET_ID_ADMIN_SUB: "legacy-user-id" }), undefined);
   for (const issuer of ["http://id.example.test", "https://user:password@id.example.test", "https://id.example.test?key=secret", "invalid"]) {
     assert.throws(() => loadPocketIdConfig({ ...env, POCKET_ID_ISSUER: issuer }));
   }
@@ -41,14 +43,14 @@ async function run() {
     assert.equal(body.get("redirect_uri"), "https://certs.example.test/api/auth/callback/pocket-id");
     assert.ok(body.get("code_verifier"));
     if (tokenFailure) return Response.json({ error_description: "fake-upstream-secret" }, { status: 400 });
-    const token = await new SignJWT({ email: "admin@example.test", email_verified: true, nonce, ...claims })
+    const token = await new SignJWT({ name: "Sunny", email: "admin@example.test", email_verified: true, nonce, ...claims })
       .setProtectedHeader({ alg: "RS256", kid: "test-key" }).setIssuer(String(claims.iss ?? "https://id.example.test"))
       .setAudience(String(claims.aud ?? "test-client")).setSubject(String(claims.sub ?? "test-admin-sub"))
       .setIssuedAt().setExpirationTime(claims.exp === 1 ? 1 : "5m").sign(badSignature ? wrongKey : privateKey);
     return Response.json({ access_token: "fake-access-token", token_type: "Bearer", id_token: token, expires_in: 300 });
   };
   try {
-    const [{ migrate }, { db }, schema, { auth, ensureAdmin }, { eq }] = await Promise.all([
+    const [{ migrate }, { db }, schema, { auth, ensureAdmin, isAuthorizedUser }, { eq }] = await Promise.all([
       import("drizzle-orm/libsql/migrator"), import("../app/db"), import("../app/db/schema"), import("../app/lib/auth"), import("drizzle-orm"),
     ]);
     await migrate(db, { migrationsFolder: "./drizzle" });
@@ -56,7 +58,7 @@ async function run() {
     assert.ok(password);
     assert.equal(await ensureAdmin(), undefined);
     assert.equal((await db.select().from(schema.authUsers)).length, 1);
-    assert.equal((await db.select().from(schema.authAccounts)).length, 2);
+    assert.equal((await db.select().from(schema.authAccounts)).length, 1);
     const cookieHeader = (response: Response) => response.headers.getSetCookie().map((cookie) => cookie.split(";")[0]).join("; ");
     const start = () => auth.handler(new Request("https://certs.example.test/api/auth/sign-in/social", {
       method: "POST", headers: { origin: "https://certs.example.test", "content-type": "application/json" },
@@ -88,12 +90,30 @@ async function run() {
     assert.equal(successful.status, 302);
     assert.equal(new URL(successful.headers.get("location")!, "https://certs.example.test").pathname, "/");
     const session = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(successful) }) });
-    assert.equal(session?.user.username, "admin");
+    assert.ok(session);
+    assert.equal(session.user.name, "Sunny");
+    assert.equal(session.user.email, "admin@example.test");
+    assert.notEqual(session.user.username, "admin");
+    assert.equal(await isAuthorizedUser(session.user), true);
+    // Each allowed Pocket ID subject gets an independent user and session.
+    claims = { sub: "friend-sub", email: "friend@example.test", name: "Friend" };
+    const friend = await login();
+    assert.equal(new URL(friend.headers.get("location")!, "https://certs.example.test").pathname, "/");
+    const friendSession = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(friend) }) });
+    assert.notEqual(friendSession?.user.id, session.user.id);
+    assert.notEqual(friendSession?.user.username, "admin");
+    assert.equal(friendSession?.user.name, "Friend");
+    assert.equal(friendSession?.user.email, "friend@example.test");
+    assert.equal((await db.select().from(schema.authAccounts)).length, 3);
+    assert.equal((await db.select().from(schema.authUsers)).length, 3);
+    await ensureAdmin();
+    assert.ok(await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(friend) }) }), "Worker restart must preserve sessions for an unchanged client binding");
+    claims = {};
     const noState = await auth.handler(new Request("https://certs.example.test/api/auth/callback/pocket-id?code=fake-code"));
     assert.ok(noState.headers.get("location")?.includes("error="));
     const wrongState = await auth.handler(new Request("https://certs.example.test/api/auth/callback/pocket-id?code=fake-code&state=wrong-state"));
     assert.ok(wrongState.headers.get("location")?.includes("error="));
-    for (const invalid of [{ sub: "unapproved-user" }, { nonce: "wrong-nonce" }, { iss: "https://evil.example.test" }, { aud: "other-client" }, { azp: "other-client" }, { exp: 1 }, { email: "" }]) {
+    for (const invalid of [{ sub: "" }, { nonce: "wrong-nonce" }, { iss: "https://evil.example.test" }, { aud: "other-client" }, { azp: "other-client" }, { exp: 1 }, { email: "" }]) {
       claims = invalid;
       const rejected = await login();
       assert.ok(rejected.headers.get("location")?.includes("authError=1"));
@@ -104,35 +124,66 @@ async function run() {
     badSignature = true;
     assert.ok((await login()).headers.get("location")?.includes("error="));
     badSignature = false;
+    // A group denial at the provider's token endpoint cannot create a local session.
+    const sessionsBeforeDenial = (await db.select().from(schema.authSessions)).length;
     tokenFailure = true;
     const tokenRejected = await login();
     assert.ok(tokenRejected.headers.get("location")?.includes("error="));
     assert.equal(tokenRejected.headers.get("location")?.includes("fake-upstream-secret"), false);
+    assert.equal((await db.select().from(schema.authSessions)).length, sessionsBeforeDenial);
     tokenFailure = false;
-    assert.equal((await db.select().from(schema.authUsers)).length, 1);
+    assert.equal((await db.select().from(schema.authUsers)).length, 3);
     // Account-management endpoints cannot disclose tokens or change the fixed binding.
-    for (const path of ["get-access-token", "refresh-token", "account-info", "link-social", "unlink-account"]) {
+    for (const path of ["get-access-token", "refresh-token", "account-info", "link-social", "unlink-account", "set-password"]) {
       const blocked = await auth.handler(new Request(`https://certs.example.test/api/auth/${path}`, { method: "POST", headers: { cookie: cookieHeader(successful), "content-type": "application/json" }, body: JSON.stringify({ providerId: "pocket-id" }) }));
       assert.equal(blocked.status, 404);
     }
-    const account = (await db.select().from(schema.authAccounts)).find((row) => row.providerId === "pocket-id")!;
-    await db.update(schema.authAccounts).set({ accountId: "old-admin-sub" }).where(eq(schema.authAccounts.id, account.id));
+    const accounts = await db.select().from(schema.authAccounts);
+    const account = accounts.find((row) => row.userId === session.user.id)!;
+    assert.equal(account.accountId, "test-admin-sub");
+    assert.equal(account.issuer, "https://id.example.test#client=test-client");
+    // Re-login resolves the same subject rather than creating a new user.
+    const repeat = await login();
+    const repeatSession = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(repeat) }) });
+    assert.equal(repeatSession?.user.id, session.user.id);
+    const { recordAudit } = await import("../app/lib/audit");
+    await recordAudit(new Request("https://certs.example.test/api/settings", { headers: { cookie: cookieHeader(friend) } }), "settings.updated", "settings");
+    const [audit] = await db.select().from(schema.auditEvents);
+    assert.equal(audit.actor, `Friend (${friendSession!.user.id})`);
+    const { middleware } = await import("../middleware");
+    const { NextRequest } = await import("next/server");
+    assert.equal((await middleware(new NextRequest("https://certs.example.test/api/settings", { headers: { cookie: cookieHeader(friend) } }))).status, 200);
+    // Signing out one person leaves the other's session intact.
+    await auth.api.signOut({ headers: new Headers({ cookie: cookieHeader(friend) }) });
+    assert.equal(await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(friend) }) }), null);
+    assert.ok(await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(successful) }) }));
+    // Legacy shared-admin bindings are retired and only that user's sessions are revoked.
+    const localSession = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(local) }) });
+    await db.insert(schema.authAccounts).values({ id: "legacy-binding", userId: localSession!.user.id, providerId: "pocket-id", issuer: "https://id.example.test", accountId: "old-admin-sub" });
     await ensureAdmin();
-    assert.equal((await db.select().from(schema.authSessions)).length, 0);
-    const bindings = (await db.select().from(schema.authAccounts)).filter((row) => row.providerId === "pocket-id");
-    assert.equal(bindings.length, 1);
-    assert.equal(bindings[0]?.accountId, "test-admin-sub");
-    // Even a matching email cannot automatically link an unbound identity.
-    await db.delete(schema.authAccounts).where(eq(schema.authAccounts.providerId, "pocket-id"));
-    claims = { email: "admin@localhost" };
-    assert.ok((await login()).headers.get("location")?.includes("error="));
-    assert.equal((await db.select().from(schema.authAccounts)).length, 1);
+    assert.equal(await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(local) }) }), null);
+    assert.ok(await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(successful) }) }));
+    assert.equal((await db.select().from(schema.authAccounts)).length, 3);
+    // Matching email never links a new subject to an existing user or local admin.
+    for (const email of ["admin@localhost", "admin@example.test"]) {
+      claims = { sub: "unlinked-sub", email };
+      assert.ok((await login()).headers.get("location")?.includes("error="));
+    }
+    assert.equal((await db.select().from(schema.authUsers)).length, 3);
+    // A changed client/issuer invalidates authorization immediately, before Worker cleanup.
+    await db.update(schema.authAccounts).set({ issuer: "https://id.example.test#client=old-client" }).where(eq(schema.authAccounts.id, account.id));
+    assert.equal(await isAuthorizedUser(session.user), false);
+    assert.equal((await middleware(new NextRequest("https://certs.example.test/api/settings", { headers: { cookie: cookieHeader(successful) } }))).status, 401);
     await ensureAdmin();
-    // Removing a stale extra binding must preserve the current binding.
-    const current = (await db.select().from(schema.authAccounts)).find((row) => row.providerId === "pocket-id")!;
-    await db.insert(schema.authAccounts).values({ id: "stale-account", userId: current.userId, providerId: "pocket-id", issuer: "https://old-id.example.test", accountId: "old-sub" });
-    await ensureAdmin();
-    assert.equal((await db.select().from(schema.authAccounts)).filter((row) => row.providerId === "pocket-id")[0]?.id, current.id);
+    assert.equal(await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(successful) }) }), null);
+    assert.ok((await db.select().from(schema.authAccounts)).some((row) => row.userId === friendSession!.user.id));
+    claims = {};
+    const reprovisioned = await login();
+    assert.equal(new URL(reprovisioned.headers.get("location")!, "https://certs.example.test").pathname, "/");
+    const reprovisionedSession = await auth.api.getSession({ headers: new Headers({ cookie: cookieHeader(reprovisioned) }) });
+    assert.ok(reprovisionedSession);
+    assert.notEqual(reprovisionedSession.user.id, session.user.id);
+    assert.equal(await isAuthorizedUser(reprovisionedSession.user), true);
     console.log("Pocket ID tests passed");
   } finally { globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true }); }
 }

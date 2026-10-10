@@ -194,7 +194,7 @@ export function LoginForm({
         <CardFooter className="border-t border-border/50 bg-muted/20 px-6 py-4">
           <div className="flex w-full items-center justify-center gap-2 text-[11px] text-muted-foreground">
             <ShieldCheck className="size-3.5 text-primary" />
-            <span>自托管单管理员控制台 · 本地数据卷权限安全隔离保护</span>
+            <span>自托管证书控制台 · 本地数据卷权限安全隔离保护</span>
           </div>
         </CardFooter>
       </Card>

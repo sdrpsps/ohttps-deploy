@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   if (!certificate || !server) return NextResponse.json({ error: { code: "NOT_FOUND", message: "certificate or server not found" } }, { status: 404 });
   await db.insert(certificateTargets).values(parsed.data).onConflictDoUpdate({ target: [certificateTargets.certificateId, certificateTargets.serverId], set: { autoDeploy: parsed.data.autoDeploy, updatedAt: new Date() } });
   await markConfigured(parsed.data.certificateId);
-  await recordAudit("deployment_policy.saved", "certificate", parsed.data.certificateId);
+  await recordAudit(request, "deployment_policy.saved", "certificate", parsed.data.certificateId);
   return NextResponse.json({ data: parsed.data }, { status: 201 });
 }
 
@@ -44,7 +44,7 @@ export async function PUT(request: Request) {
   await db.delete(certificateTargets).where(eq(certificateTargets.certificateId, parsed.data.certificateId));
   if (serverIds.length) await db.insert(certificateTargets).values(serverIds.map((serverId) => ({ certificateId: parsed.data.certificateId, serverId, autoDeploy: true })));
   await markConfigured(parsed.data.certificateId);
-  await recordAudit("deployment_policy.saved", "certificate", parsed.data.certificateId);
+  await recordAudit(request, "deployment_policy.saved", "certificate", parsed.data.certificateId);
   return NextResponse.json({ data: { certificateId: parsed.data.certificateId, serverIds } });
 }
 
@@ -53,7 +53,7 @@ export async function DELETE(request: Request) {
   if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "invalid deployment policy" } }, { status: 400 });
   await db.delete(certificateTargets).where(and(eq(certificateTargets.certificateId, parsed.data.certificateId), eq(certificateTargets.serverId, parsed.data.serverId)));
   await markConfigured(parsed.data.certificateId);
-  await recordAudit("deployment_policy.deleted", "certificate", parsed.data.certificateId);
+  await recordAudit(request, "deployment_policy.deleted", "certificate", parsed.data.certificateId);
   return new NextResponse(null, { status: 204 });
 }
 

@@ -31,7 +31,7 @@ export type SettingsSummary = Omit<SettingsForm, "ohttpsApiKey"> & {
   sharedSshPrivateKeyConfigured: boolean;
 };
 
-type Props = { open: boolean; busy: boolean; settings: SettingsSummary | null; onOpenChange: (open: boolean) => void; onSave: (value: SettingsForm) => Promise<boolean>; onTestBark: (webhookUrl: string) => void; onConfigureSshKey: () => void; onChangePassword: () => void };
+type Props = { open: boolean; busy: boolean; settings: SettingsSummary | null; onOpenChange: (open: boolean) => void; onSave: (value: SettingsForm) => Promise<boolean>; onTestBark: (webhookUrl: string) => void; onConfigureSshKey: () => void; onChangePassword?: () => void };
 
 export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onTestBark, onConfigureSshKey, onChangePassword }: Props) {
   const form = useForm<SettingsForm>({ resolver: zodResolver(schema), defaultValues: defaults });
@@ -226,7 +226,7 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onT
                 </Button>
               </div>
 
-              <div className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/[0.08] p-3.5">
+              {onChangePassword && <div className="flex items-center justify-between rounded-xl border border-border/80 bg-muted/[0.08] p-3.5">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-1.5">
                     <ShieldCheck className="size-3.5 text-primary" />
@@ -246,7 +246,7 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onT
                 >
                   修改密码
                 </Button>
-              </div>
+              </div>}
             </div>
 
             <DialogFooter className="gap-2 sm:gap-0 pt-2">

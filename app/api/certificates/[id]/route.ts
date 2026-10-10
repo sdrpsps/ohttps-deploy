@@ -50,11 +50,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     await db.insert(settings).values({ key: `deployment_policy_configured_${id}`, value: "1" }).onConflictDoUpdate({ target: settings.key, set: { value: "1", updatedAt: new Date() } });
   }
-  await recordAudit("certificate.updated", "certificate", id);
+  await recordAudit(request, "certificate.updated", "certificate", id);
   return NextResponse.json({ data: row });
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const [[certificate], [version], [deployment]] = await Promise.all([
     db.select({ id: certificates.id }).from(certificates).where(eq(certificates.id, id)).limit(1),
@@ -65,6 +65,6 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   if (version || deployment) return NextResponse.json({ error: { code: "HAS_HISTORY", message: "certificate has version or deployment history; disable it instead" } }, { status: 409 });
   await db.delete(certificateTargets).where(eq(certificateTargets.certificateId, id));
   await db.delete(certificates).where(eq(certificates.id, id));
-  await recordAudit("certificate.deleted", "certificate", id);
+  await recordAudit(request, "certificate.deleted", "certificate", id);
   return new NextResponse(null, { status: 204 });
 }

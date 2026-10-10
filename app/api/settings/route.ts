@@ -65,6 +65,6 @@ export async function POST(request: Request) {
     ...(value.ohttpsApiId ? [saveSetting("ohttps_api_id", value.ohttpsApiId)] : []),
     ...(value.ohttpsApiKey ? [saveSetting("ohttps_api_key", value.ohttpsApiKey)] : []),
   ]);
-  await recordAudit("settings.updated", "settings");
+  await recordAudit(request, "settings.updated", "settings");
   return GET();
 }

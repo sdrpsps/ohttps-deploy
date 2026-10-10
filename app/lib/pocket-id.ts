@@ -5,9 +5,9 @@ import { createRemoteJWKSet, customFetch, jwtVerify } from "jose"
 import { z } from "zod"
 
 export function loadPocketIdConfig(env: Record<string, string | undefined> = process.env) {
-  const keys = ["POCKET_ID_ISSUER", "POCKET_ID_CLIENT_ID", "POCKET_ID_CLIENT_SECRET", "POCKET_ID_ADMIN_SUB"] as const
+  const keys = ["POCKET_ID_ISSUER", "POCKET_ID_CLIENT_ID", "POCKET_ID_CLIENT_SECRET"] as const
   if (!keys.some((key) => env[key]?.trim())) return undefined
-  if (keys.some((key) => !env[key]?.trim())) throw new Error("Pocket ID configuration requires POCKET_ID_ISSUER, POCKET_ID_CLIENT_ID, POCKET_ID_CLIENT_SECRET and POCKET_ID_ADMIN_SUB")
+  if (keys.some((key) => !env[key]?.trim())) throw new Error("Pocket ID configuration requires POCKET_ID_ISSUER, POCKET_ID_CLIENT_ID and POCKET_ID_CLIENT_SECRET")
   let issuer: URL
   try { issuer = new URL(env.POCKET_ID_ISSUER!.trim()) } catch { throw new Error("Invalid POCKET_ID_ISSUER") }
   if (issuer.protocol !== "https:" || issuer.username || issuer.password || issuer.search || issuer.hash) throw new Error("POCKET_ID_ISSUER must be an HTTPS URL without credentials, query or fragment")
@@ -15,11 +15,15 @@ export function loadPocketIdConfig(env: Record<string, string | undefined> = pro
     issuer: issuer.href.replace(/\/$/, ""),
     clientId: env.POCKET_ID_CLIENT_ID!.trim(),
     clientSecret: env.POCKET_ID_CLIENT_SECRET!.trim(),
-    adminSub: env.POCKET_ID_ADMIN_SUB!.trim(),
   }
 }
 
 export type PocketIdConfig = NonNullable<ReturnType<typeof loadPocketIdConfig>>
+
+/** Keep local identities and sessions scoped to this issuer and client. */
+export function pocketIdAccountIssuer(config: PocketIdConfig) {
+  return `${config.issuer}#client=${encodeURIComponent(config.clientId)}`
+}
 
 const discoverySchema = z.object({
   issuer: z.string(),
@@ -65,7 +69,8 @@ export function pocketIdPlugin(config: PocketIdConfig, fetcher: typeof fetch = f
   const plugin = genericOAuth({ config: [{
     providerId: "pocket-id",
     name: "Pocket ID",
-    accountIssuer: config.issuer,
+    accountIssuer: pocketIdAccountIssuer(config),
+    // Only verified ID tokens reach account resolution. Pocket ID enforces this client's allowed groups.
     accountSubject: ({ profile }) => typeof profile.sub === "string" ? profile.sub : "",
     clientId: config.clientId,
     clientSecret: config.clientSecret,
@@ -73,7 +78,7 @@ export function pocketIdPlugin(config: PocketIdConfig, fetcher: typeof fetch = f
     authorizationUrl: `${config.issuer}/authorize`,
     scopes: ["openid", "profile", "email"],
     pkce: true,
-    disableSignUp: true,
+    disableSignUp: false,
     disableProviderLogout: true,
     async getToken({ code, redirectURI, codeVerifier }) {
       try {
@@ -113,8 +118,9 @@ export function pocketIdPlugin(config: PocketIdConfig, fetcher: typeof fetch = f
           jwks ??= createRemoteJWKSet(new URL(metadata.jwks_uri), { timeoutDuration: 10_000, [customFetch]: fetcher })
           const { payload } = await jwtVerify(tokens.idToken, jwks, { issuer: config.issuer, audience: config.clientId, algorithms: ["RS256", "ES256"], requiredClaims: ["sub", "exp", "iat", "nonce"] })
           if ((payload.azp !== undefined && payload.azp !== config.clientId) || (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== config.clientId)) return null
-          if (payload.nonce !== tokens.expectedIdTokenNonce || payload.sub !== config.adminSub || typeof payload.email !== "string" || !payload.email) return null
-          return { user: { email: payload.email, emailVerified: payload.email_verified === true, name: "admin" }, data: payload }
+          if (payload.nonce !== tokens.expectedIdTokenNonce || typeof payload.sub !== "string" || !payload.sub.trim() || typeof payload.email !== "string" || !payload.email) return null
+          const name = [payload.name, payload.preferred_username, payload.email].find((value) => typeof value === "string" && value.trim()) as string
+          return { user: { email: payload.email, emailVerified: payload.email_verified === true, name }, data: payload }
         } catch { return null }
       }
       return result

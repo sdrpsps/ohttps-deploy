@@ -56,6 +56,6 @@ export async function POST(request: Request) {
     }
     await db.insert(settings).values({ key: `deployment_policy_configured_${id}`, value: "1" }).onConflictDoUpdate({ target: settings.key, set: { value: "1", updatedAt: new Date() } });
   }
-  await recordAudit("certificate.created", "certificate", id);
+  await recordAudit(request, "certificate.created", "certificate", id);
   return NextResponse.json({ data: { id } }, { status: 201 });
 }

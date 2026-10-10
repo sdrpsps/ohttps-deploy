@@ -21,8 +21,8 @@ export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
   emailAndPassword: { enabled: true, disableSignUp: true },
   account: { accountLinking: { enabled: false } },
-  // These generic OAuth management APIs can disclose provider tokens or remove the fixed binding.
-  disabledPaths: ["/get-access-token", "/refresh-token", "/account-info", "/link-social", "/unlink-account"],
+  // Keep provider tokens private and prevent OAuth users from adding a password fallback.
+  disabledPaths: ["/get-access-token", "/refresh-token", "/account-info", "/link-social", "/unlink-account", "/set-password"],
   onAPIError: { errorURL: "/login?authError=1" },
   logger: { log(level) { console[level]("Authentication operation reported an error or warning") } },
   plugins: [username({ displayUsername: false, immutableUsername: true }), ...(pocketIdConfig ? [pocketIdPlugin(pocketIdConfig)] : [])],

@@ -27,6 +27,8 @@ import { APP_VERSION } from "@/lib/version";
 import type { DashboardSection, NavigationItem } from "./types";
 
 type ConsoleLayoutProps = {
+  userName: string;
+  localAdmin: boolean;
   section: DashboardSection;
   navigation: NavigationItem[];
   onSettings: () => void;
@@ -36,6 +38,8 @@ type ConsoleLayoutProps = {
 };
 
 export function ConsoleLayout({
+  userName,
+  localAdmin,
   section,
   navigation,
   onSettings,
@@ -195,7 +199,7 @@ export function ConsoleLayout({
                   <div className="flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
                     <User className="size-3" />
                   </div>
-                  <span className="font-mono text-xs font-semibold">admin</span>
+                  <span className="font-mono text-xs font-semibold">{userName}</span>
                   <ChevronDown className="size-3 text-muted-foreground/60" />
                 </button>
               </DropdownMenuTrigger>
@@ -203,7 +207,7 @@ export function ConsoleLayout({
                 <DropdownMenuLabel className="font-normal">
                   <div className="flex flex-col space-y-1">
                     <p className="text-xs font-semibold leading-none text-foreground">系统管理员</p>
-                    <p className="font-mono text-[11px] leading-none text-muted-foreground">admin · 本地自托管</p>
+                    <p className="font-mono text-[11px] leading-none text-muted-foreground">{localAdmin ? "本地管理员" : "通行密钥登录"}</p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />

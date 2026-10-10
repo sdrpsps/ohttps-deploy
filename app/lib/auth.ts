@@ -1,12 +1,23 @@
 import { randomBytes } from "node:crypto"
-import { and, eq, ne } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { auth, pocketIdConfig } from "@/lib/better-auth"
 import { db } from "@/db"
 import { authAccounts, authSessions, authUsers } from "@/db/schema"
+import { pocketIdAccountIssuer } from "@/lib/pocket-id"
 
 export { auth }
 
-/** Ensure the fixed single-admin account exists without exposing sign-up publicly. */
+export async function isAuthorizedUser(user: { id: string; username?: string | null }) {
+  if (user.username === "admin") return true
+  if (!pocketIdConfig) return false
+  const [account] = await db.select({ id: authAccounts.id }).from(authAccounts).where(and(
+    eq(authAccounts.userId, user.id), eq(authAccounts.providerId, "pocket-id"),
+    eq(authAccounts.issuer, pocketIdAccountIssuer(pocketIdConfig)),
+  )).limit(1)
+  return !!account
+}
+
+/** Keep the local recovery admin and retire legacy or disabled Pocket ID bindings. */
 export async function ensureAdmin() {
   const [existing] = await db
     .select({ id: authUsers.id })
@@ -28,18 +39,16 @@ export async function ensureAdmin() {
     issuer: "local:credential",
     password: await context.password.hash(password),
   })
-  // Worker owns provisioning. Never create or link an administrator from a browser claim.
   await db.transaction(async (tx) => {
     const bindings = await tx.select().from(authAccounts).where(eq(authAccounts.providerId, "pocket-id"))
-    const current = bindings.find((account) => account.userId === user.id && account.issuer === pocketIdConfig?.issuer && account.accountId === pocketIdConfig?.adminSub)
-    if (bindings.some((account) => account.id !== current?.id)) {
-      await tx.delete(authAccounts).where(and(eq(authAccounts.providerId, "pocket-id"), ...(current ? [ne(authAccounts.id, current.id)] : [])))
-      // Revoking or replacing the binding also invalidates previously issued admin sessions.
-      await tx.delete(authSessions).where(eq(authSessions.userId, user.id))
+    const issuer = pocketIdConfig ? pocketIdAccountIssuer(pocketIdConfig) : undefined
+    for (const account of bindings) {
+      if (account.userId !== user.id && account.issuer === issuer) continue
+      await tx.delete(authAccounts).where(eq(authAccounts.id, account.id))
+      await tx.delete(authSessions).where(eq(authSessions.userId, account.userId))
+      const [remaining] = await tx.select({ id: authAccounts.id }).from(authAccounts).where(eq(authAccounts.userId, account.userId)).limit(1)
+      if (account.userId !== user.id && !remaining) await tx.delete(authUsers).where(eq(authUsers.id, account.userId))
     }
-    if (pocketIdConfig && !current) await tx.insert(authAccounts).values({
-      id: randomBytes(16).toString("hex"), userId: user.id, providerId: "pocket-id", issuer: pocketIdConfig.issuer, accountId: pocketIdConfig.adminSub,
-    })
   })
   return password
 }

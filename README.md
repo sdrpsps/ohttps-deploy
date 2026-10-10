@@ -1,48 +1,59 @@
 # ohttps-deploy
 
-一个面向单管理员自托管环境的证书同步与 SSH 部署控制台。它从 ohttps 获取证书，验证证书与私钥、保留不可变版本，并把新版本安全分发到已配置的 Nginx 服务器。
+ohttps-deploy 是一个自托管的 HTTPS 证书管理和自动部署控制台。
 
-它适合“中心机可以 SSH 连接目标服务器”的场景。Web 控制台只负责配置和观察；独立 Worker 执行所有耗时工作，因此刷新、部署和通知都不会阻塞浏览器请求。
+它从 [ohttps](https://ohttps.com) 获取证书，在本地保存可回滚的证书版本，再通过 SSH 将证书安全地推送到 Nginx 服务器。证书续期、部署、通知和日志归档由后台 Worker 自动执行，不需要一直打开浏览器。
 
-> 这是用于管理生产私钥的系统。请先阅读[安全边界](#安全边界)，再将它暴露给网络。
+> 这个系统会管理证书私钥和 SSH 私钥。正式使用前，请先阅读[安全与边界](#安全与边界)，并确保 data 目录、数据库备份和服务器访问权限只对可信管理员开放。
 
-## 能做什么
+## 你可以用它做什么
 
-- 通过 ohttps `certificateId` 同步证书，并集中处理签名、超时和响应校验。
-- 校验 PEM、私钥匹配、域名 SAN 和叶子证书有效期；证书按不可变版本保存，失败时保留上一份可用版本。
-- 按服务器指纹验证 SSH 主机，临时上传后原子替换证书和私钥，执行 `nginx -t`、reload 与可选健康检查；失败后尝试回滚远端文件。
-- 为每张证书设置部署目标；查看任务、目标级状态、实时日志和历史记录，并可取消或重试任务。API 也支持任务级并发、失败策略和 dry-run。
-- 定时扫描本地证书。仅在进入续期窗口后同步 ohttps，且受到每证书最小间隔和每日调用上限保护，避免无意义的调用成本。
-- 将同步、部署、过期和恢复事件以 Bark JSON 格式推送，并记录失败、重试和投递结果。
-- 提供审计记录、基础 Prometheus 指标、数据库备份/恢复接口和日志归档。
+- 从 ohttps 定时获取证书，并校验证书、私钥、域名和有效期。
+- 保存不可变的证书版本。新版本部署失败时，旧版本仍然保留，可以继续回滚或重新部署。
+- 通过已经验证过的 SSH 主机指纹连接目标服务器。
+- 部署前执行 nginx -t，上传到临时文件，再原子替换证书并 reload Nginx。
+- 为每张证书选择要部署的服务器，并查看每台服务器的成功、失败和实时日志。
+- 在证书进入续期窗口后自动同步，并限制调用间隔和每日调用次数，避免重复消耗 ohttps 配额。
+- 通过 Bark 接收证书同步、部署失败、即将过期等通知。
+- 查看活动审计、Prometheus 基础指标、Worker 健康状态，并进行数据库备份和恢复。
 
-## 工作方式
+## 它是怎样工作的
 
-| 组件 | 职责 | 必须持久化的内容 |
-| --- | --- | --- |
-| Web | 登录、配置、创建任务、查询历史、SSE 日志流 | 无状态；与 Worker 共享数据目录 |
-| Worker | 数据库迁移、调度、本地检查、ohttps 同步、SSH 部署、Bark 推送与归档 | SQLite、证书版本、日志归档 |
-| 目标服务器 | 验证来源 SSH 主机、接收证书、验证并重载 Nginx | 当前使用中的证书与私钥 |
+项目由两个容器组成：
+
+| 组件 | 作用 |
+| --- | --- |
+| Web | 登录、保存配置、创建任务、查看证书和日志。它不等待耗时任务完成。 |
+| Worker | 运行数据库迁移、定时扫描、ohttps 同步、SSH 部署、通知、重试和日志归档。 |
+| data 目录 | Web 和 Worker 共享的持久目录，包含数据库、证书版本、敏感配置和日志归档。 |
+| 目标服务器 | 接收证书并验证、reload Nginx。所有目标服务器共用控制台里配置的那把 SSH 私钥。 |
+
+Worker 停止时，Web 仍可能可以打开，但任务不会继续执行。Worker 恢复后会接着处理未完成的任务。
 
 ## 开始前准备
 
-- 一台可运行 Docker Compose 的中心机；中心机网络必须能访问 ohttps 和所有目标服务器的 SSH 端口。
-- ohttps 的 API ID、API Key 和需要管理的 `certificateId`。
-- 一把专用于本系统的 SSH 私钥；对应公钥必须已配置到每台目标服务器。当前版本的所有服务器共用这一把私钥。
-- 目标服务器上的 Nginx、证书目标目录，以及允许部署用户执行的非交互 `nginx -t` / reload 命令。
-- 一个 HTTPS 反向代理和只允许可信来源访问的网络边界（生产环境）。
+你需要准备：
 
-可使用已有私钥，或在安全的管理机上生成一把专用密钥：
+1. 一台可以运行 Docker Compose 的中心机。
+2. 中心机能够访问 ohttps.com 和目标服务器的 SSH 端口。
+3. ohttps 的 API ID、API Key，以及要管理的 certificateId。
+4. 一把专门给本项目使用的 SSH 私钥。对应的公钥要放到每台目标服务器上。
+5. 目标服务器上的 Nginx、证书目录，以及允许执行 nginx -t 和 reload 的部署用户。
+6. 生产环境使用 HTTPS 反向代理，并限制 3000 端口只能被反向代理或可信网络访问。
+
+可以在中心机生成专用的 Ed25519 密钥：
 
 ```bash
 ssh-keygen -t ed25519 -f ./ohttps-deploy -C ohttps-deploy
 ```
 
-妥善保管私钥 `./ohttps-deploy`。稍后将其内容粘贴到控制台；只把公钥 `./ohttps-deploy.pub` 配置到目标服务器。
+私钥 ./ohttps-deploy 只放在受信任的地方，稍后粘贴到控制台。只把公钥 ./ohttps-deploy.pub 配置到目标服务器。
 
-## 用 Docker Compose 启动
+## 第一步：用 Docker Compose 启动
 
-### 1. 准备配置和数据目录
+### 1. 准备目录和环境变量
+
+在项目目录中执行：
 
 ```bash
 cp .env.example .env
@@ -50,163 +61,296 @@ mkdir -p data
 chmod 700 data
 ```
 
-镜像会在启动时将 bind mount 的 `data` 目录交给容器内低权限应用用户，然后再以该用户运行 Web 和 Worker；首次启动不需要手动查询 UID/GID 或执行 `chown`。该目录包含私钥与数据库，仍应保持 `700` 权限且只由受信任的宿主机管理员访问。
+编辑 .env。最少需要检查下面几个值：
 
-编辑 `.env`：
+```dotenv
+# 生产环境必须换成随机长字符串，至少 32 个字符
+AUTH_SECRET=请替换成随机字符串
 
-- 将 `AUTH_SECRET` 换成至少 32 个字符的随机值。例如运行 `openssl rand -base64 48`，将输出完整复制进去。
-- 本地试用时设为 `BETTER_AUTH_URL=http://localhost:3000`。
-- 通过 HTTPS 反向代理部署时，设为浏览器实际访问的完整 Origin，例如 `https://certs.example.com`；不要添加路径或末尾 `/`。
-- 如需把持久数据放到其他位置，设置 `OHTTPS_DATA_DIR` 为中心机上的绝对路径。该目录包含数据库、私钥、证书版本和归档日志，必须限制访问权限。
+# 本地试用
+BETTER_AUTH_URL=http://localhost:3000
 
-默认 `DATABASE_URL`、`CERTIFICATE_STORAGE_DIR` 和 `LOG_ARCHIVE_DIR` 都位于 `./data`。不要把真实 ohttps 凭据、私钥或证书写进 `.env`、仓库或截图；Bark 推送 URL 可在登录后通过控制台保存与回显。
+# 生产环境示例：浏览器实际访问的地址，不要加路径或末尾斜杠
+# BETTER_AUTH_URL=https://certs.example.com
+```
 
-### 2. 启动 Web 与 Worker
+可以使用下面的命令生成 AUTH_SECRET：
+
+```bash
+openssl rand -base64 48
+```
+
+默认情况下，以下内容都保存在 ./data：
+
+| 内容 | 默认位置 |
+| --- | --- |
+| SQLite 数据库 | ./data/ohttps-deploy.db |
+| 证书版本 | ./data/certs |
+| 历史日志归档 | ./data/logs |
+
+如果要把数据放到其他位置，设置一个绝对路径：
+
+```dotenv
+OHTTPS_DATA_DIR=/srv/ohttps-deploy/data
+```
+
+这个目录包含数据库、ohttps 凭据、SSH 私钥、证书和日志，请按照最高敏感级别保护。不要把真实 .env、证书、私钥、Cookie 或 API Key 提交到 Git、截图或普通日志中。
+
+### 环境变量速查
+
+大多数用户只需要修改 `AUTH_SECRET`、`BETTER_AUTH_URL`，以及可选的 `OHTTPS_DATA_DIR` 和 Pocket ID 三项。完整配置如下：
+
+| 变量 | 是否必须 | 作用 |
+| --- | --- | --- |
+| `AUTH_SECRET` | 生产环境必须 | 签名登录会话，至少 32 个字符。 |
+| `BETTER_AUTH_URL` | 建议设置 | 浏览器实际访问的完整 Origin，例如 `https://certs.example.com`。 |
+| `OHTTPS_DATA_DIR` | 可选 | Docker 主机上的数据目录，默认 `./data`。 |
+| `DATABASE_URL` | 可选 | 数据库地址，默认 `./data/ohttps-deploy.db`。默认路径适合 SQLite；也支持配置 libSQL/Turso。 |
+| `CERTIFICATE_STORAGE_DIR` | 可选 | 证书版本目录，默认 `./data/certs`。 |
+| `LOG_ARCHIVE_DIR` | 可选 | 日志归档目录，默认 `./data/logs`。 |
+| `TURSO_AUTH_TOKEN` | 使用 Turso 时需要 | 连接远程 libSQL 数据库的令牌。 |
+| `POCKET_ID_ISSUER` | 使用 Pocket ID 时需要 | Pocket ID 的 HTTPS issuer。 |
+| `POCKET_ID_CLIENT_ID` | 使用 Pocket ID 时需要 | OIDC 客户端 ID。 |
+| `POCKET_ID_CLIENT_SECRET` | 使用 Pocket ID 时需要 | OIDC 客户端密钥。 |
+
+Pocket ID 的三项要么全部配置，要么全部留空。`POCKET_ID_ADMIN_SUB` 已经移除，不需要查找或填写 Pocket ID 用户 ID。
+
+### 2. 启动两个服务
 
 ```bash
 docker compose up -d --build
+docker compose ps
 docker compose logs -f worker
 ```
 
-Worker 首次连接到**空数据库**时会创建 `admin` 并在日志中打印一次初始密码。立即保存该密码，随后访问 `http://localhost:3000` 登录并在**设置**中修改它。复用已有 `data` 或恢复数据库时不会生成或再次显示密码；初始密码也不会通过 API 返回。
+第一次使用空数据库时，Worker 会创建本地账号 admin，并且只在 Worker 启动日志中打印一次初始密码。看到密码后立即保存，然后打开 http://localhost:3000 登录并在设置中修改密码。
 
-确认服务和 Worker 均正常：
+初始密码不会通过 API 返回；复用已有 data 目录或恢复数据库时也不会重新生成。
+
+检查 Web 和 Worker：
 
 ```bash
 curl -fsS http://localhost:3000/api/health
 ```
 
-响应中的 `status` 为 `ok` 且 `worker` 为 `true` 时，Worker 心跳正常。`degraded` 通常表示 Worker 尚未启动、无法连接共享数据库，或两分钟内没有更新心跳。
+返回内容中的 status 应为 ok，worker 应为 true。如果 worker 为 false，通常是 Worker 尚未启动、无法连接共享数据库，或超过两分钟没有更新心跳。
 
-常用维护命令：
+常用命令：
 
 ```bash
-docker compose ps
 docker compose logs -f web
 docker compose logs -f worker
+docker compose restart web worker
 docker compose down
 ```
 
-停止服务不会删除 `data` 目录。不要使用会删除数据卷或主机目录的清理命令，除非已经完成可用备份。
+docker compose down 不会删除 data。除非已有可用备份，否则不要使用会删除数据卷或主机目录的清理命令。
 
-## 首次配置与首次部署
+## 登录方式
 
-按以下顺序执行。控制台首页的“首次配置向导”也会显示缺失项。
+### 本地管理员
 
-### 可选：使用 Pocket ID 登录
+本地账号固定为 admin，密码只用于本地恢复和没有配置 Pocket ID 的环境。登录后可以在设置中修改密码。
 
-项目支持通过 Pocket ID 的 OIDC 授权码流程登录。只有指定的一个 Pocket ID 用户能够使用现有 `admin` 账号；不会开放注册，也不会按邮箱自动关联管理员。本地密码登录继续可用，Pocket ID 故障时可以用它恢复访问。
+### Pocket ID（推荐）
 
-1. 在 Pocket ID 的 **OIDC Clients** 中创建一个机密客户端，保存 Client ID 和 Client Secret。回调 URL 必须精确填写为 `https://certs.example.com/api/auth/callback/pocket-id`，其中域名替换为本项目的 `BETTER_AUTH_URL`。启用授权码流程和 PKCE，允许 `openid profile email` scopes；将客户端的允许用户限制为你的管理员。
-2. 从 Pocket ID 用户详情获取该管理员的用户 ID（OIDC `sub`），不要使用用户名、邮箱或客户端 ID 代替。
-3. 在 `.env` 中填写以下四项，Web 和 Worker 必须使用相同配置：
+Pocket ID 登录按钮在页面上显示为“使用通行密钥登录”。它使用 Pocket ID 的 OIDC 授权流程；每位通过该客户端验证的用户都会拥有独立的本地账号、会话和审计身份，但所有获准用户都拥有本项目的完整管理权限。
+
+访问资格由 Pocket ID 的 OIDC 客户端允许用户组决定：
+
+1. 在 Pocket ID 的 OIDC Clients 中创建机密客户端。
+2. 回调地址填写：
+
+   ```text
+   https://你的域名/api/auth/callback/pocket-id
+   ```
+
+   这里的域名必须和 BETTER_AUTH_URL 完全对应。
+3. 启用授权码流程和 PKCE，允许 openid profile email scopes。
+4. 在这个 OIDC 客户端本身限制允许的用户组。只创建用户组、但没有把组绑定到客户端，并不能限制访问。
+5. 在 .env 中配置三项，并让 Web 和 Worker 使用相同值：
 
    ```dotenv
    POCKET_ID_ISSUER=https://id.example.com
-   POCKET_ID_CLIENT_ID=your-oidc-client-id
-   POCKET_ID_CLIENT_SECRET=your-oidc-client-secret
-   POCKET_ID_ADMIN_SUB=your-pocket-id-user-id
+   POCKET_ID_CLIENT_ID=你的客户端 ID
+   POCKET_ID_CLIENT_SECRET=你的客户端密钥
    ```
 
-   `POCKET_ID_ISSUER` 必须是 Pocket ID 的准确 HTTPS issuer，不含末尾 `/`、查询参数或 URL 凭据。应用通过 `/.well-known/openid-configuration` 发现端点，要求授权、令牌和 JWKS 端点与 issuer 同源；ID token 需要包含 `email`。Client Secret 只保存在受限的运行环境中，不要提交 `.env`。四项必须一起配置；全部不配置时保持原来的密码登录。
+从 Pocket ID 允许组移除用户会阻止这个用户再次登录，但已经签发的本地会话会继续有效，直到用户退出、会话到期或管理员撤销该会话。更换 issuer 或 Client ID 后，旧身份会失去访问资格，Worker 会在启动时清理旧绑定和旧会话。本地 admin 仍然可以作为恢复入口。
 
-4. 使用包含本次改动的镜像，执行 `docker compose up -d --build --force-recreate web worker`，等待 Worker 初始化完成，再点击登录页的“使用 Pocket ID 登录”。Worker 会幂等地将指定的 issuer/sub 绑定到已有 `admin`，无需数据库结构迁移。空数据库仍会创建本地管理员并打印一次初始密码。
+## 第二步：完成首次配置
 
-认证会校验 state、PKCE、ID token 签名、issuer、audience、有效期、nonce 和指定的 `sub`；支持 RS256 和 ES256 签名。应用不请求离线权限，也不向浏览器提供 Pocket ID 的访问令牌。外部认证请求最长 10 秒，失败时显示通用错误。退出登录清除本应用的会话；Pocket ID 的会话仍可用于其他应用。
+登录后，按首页的初始化向导操作。推荐顺序如下：
 
-更换 issuer/sub 或关闭 Pocket ID 时，同步更新 Web 与 Worker 配置并重启。Worker 会移除旧绑定并使现有管理员会话失效，需要重新登录。关闭时删除上述四项；保留本地密码以便恢复。Client Secret 轮换只需更新环境变量并重启两个服务。
+1. 在系统设置中保存 ohttps 凭据。
+2. 配置共享 SSH 私钥。
+3. 在每台目标服务器上创建部署用户并校验 SSH 连接。
+4. 添加证书。
+5. 添加服务器。
+6. 在部署策略中把证书绑定到服务器。
+7. 手动同步一张低风险证书，确认部署链路正常后，再接入生产证书。
 
-协议配置参考 [Pocket ID 客户端认证文档](https://pocket-id.org/docs/guides/oidc-client-authentication)；应用复用 [Better Auth Generic OAuth](https://better-auth.com/docs/plugins/generic-oauth) 的授权码、state 与 PKCE 流程。
+### 配置 ohttps 凭据和调度
 
-### 1. 保存系统凭据与调度策略
+打开侧边栏的系统设置，填写：
 
-登录后打开侧边栏的**设置**：
+- API ID：ohttps 提供的 API ID。
+- API Key：ohttps 提供的 API Key。已经保存的 Key 只会掩码显示，留空保存不会覆盖它。
+- Bark 推送 URL：可选，例如 https://api.day.app/你的设备 Key。可以先发送测试消息，再保存。
+- 默认提前续期天数：证书距离到期还有多少天时进入续期窗口，默认 20 天。
+- API 最小调用间隔：同一张证书两次向 ohttps 请求之间的最短时间，默认 86,400 秒（24 小时）。
+- 每日 API 调用限额：默认 100 次。
+- 后台扫描轮询周期：默认 60 分钟。
+- 日志保留天数：默认 90 天。
 
-1. 填写 ohttps API ID 和 API Key。
-2. 点击“配置私钥”，粘贴专用 SSH 私钥完整内容。
-3. 可选：填写 Bark 推送 URL（例如 `https://api.day.app/<设备 Key>`），可直接发送测试消息，无需先保存。
-4. 检查续期与调度值。默认值为提前 20 天续期、最小调用间隔 86,400 秒、每日最多 100 次调用、每 60 分钟扫描、日志保留 90 天。
+### 配置共享 SSH 私钥
 
-保存后，Bark 推送 URL 会直接回显；ohttps API Key 仍只会以掩码显示。
+在系统设置 → 共享 SSH 私钥中粘贴私钥全文。保存后，控制台会显示配套公钥，可以复制到目标服务器。
 
-### 2. 准备目标服务器
-
-仓库包含一份幂等的辅助脚本，可创建受限部署用户、写入公钥、创建证书目录，并只授权 Nginx 验证和 reload 所需的 `sudo -n` 命令。在每个目标服务器上以 root 或 sudo 运行：
-
-```bash
-sudo bash scripts/setup-ohttps-deploy-user.sh --key "$(cat /安全路径/ohttps-deploy.pub)"
-```
-
-这条命令是在**目标服务器**上执行的；请先通过可信渠道将公钥文件传到该服务器。中心机上的路径不会自动在目标服务器可见。
-
-默认用户为 `cert`、证书目录为 `/etc/nginx/ssl`。脚本完成后会输出需要填入控制台的用户名、证书路径、私钥路径、验证命令和 reload 命令。
-
-如果 Nginx 运行在 Docker 容器中，使用容器名：
+私钥只提交给服务端并保存在 SQLite 中，不会在界面或 API 中再次显示。后台自动部署需要不带密码短语的私钥。如果界面提示私钥带有 Passphrase，可以在安全的管理机上处理后再导入：
 
 ```bash
-sudo bash scripts/setup-ohttps-deploy-user.sh --docker nginx --key "$(cat /安全路径/ohttps-deploy.pub)"
+ssh-keygen -p -f ./ohttps-deploy
 ```
 
-运行前请确认：目标目录已挂载给 Nginx（容器场景）、Nginx 配置已引用该路径、中心机可通过 SSH 到达目标主机。脚本会做权限和 `nginx -t` 自检；先解决脚本的失败项，再继续添加服务器。
+## 第三步：准备目标服务器
 
-### 3. 添加证书
+项目提供 scripts/setup-ohttps-deploy-user.sh，可以在目标服务器上创建权限受限的部署用户、写入公钥、创建证书目录和最小化的 sudo 规则。
 
-打开**证书**并选择“添加证书”，填写：
+### 使用初始化脚本（推荐）
 
-- **名称**：仅用于控制台识别，例如“生产主站”。
-- **域名**：必须存在于证书的 SAN 中，例如 `example.com`。同步时会校验。
-- **ohttps 证书 ID**：来自 ohttps 的 `certificateId`。
-- **提前续期天数**：通常保持 20；该值可以按证书覆盖全局默认值。
+先把仓库或脚本放到目标服务器，再以 root 或 sudo 执行。下面的命令使用默认用户 cert 和默认目录 /etc/nginx/ssl：
 
-Worker 在下一次扫描时自动获取没有本地缓存的证书；也可以点击“立即同步”提前创建任务。自动和手动同步都可能产生 ohttps 调用费用。
+```bash
+sudo bash scripts/setup-ohttps-deploy-user.sh \
+  --key "ssh-ed25519 AAAA..."
+```
 
-### 4. 添加并验证服务器
+如果需要自定义用户或证书目录：
 
-打开**服务器**，填写主机、端口和部署用户名。先点击“获取指纹”，由 Web 服务所在网络发起 SSH 握手并填入 SHA-256 主机指纹；保存服务器后执行“连接测试”。
+```bash
+sudo bash scripts/setup-ohttps-deploy-user.sh \
+  --user cert \
+  --cert-dir /etc/nginx/certs \
+  --key "ssh-ed25519 AAAA..."
+```
 
-远端路径按证书域名自动确定，无需填写：`/etc/nginx/ssl/<domain>/fullchain.pem` 和 `/etc/nginx/ssl/<domain>/privkey.pem`。服务器只需配置连接信息和命令：
+如果 Nginx 在 Docker 容器中：
 
-| 设置 | 默认值 |
+```bash
+sudo bash scripts/setup-ohttps-deploy-user.sh \
+  --docker nginx \
+  --key "ssh-ed25519 AAAA..."
+```
+
+脚本会执行权限和 Nginx 自测，最后输出控制台需要填写的信息。默认情况下，证书会写到：
+
+```text
+/etc/nginx/ssl/<域名>/fullchain.pem
+/etc/nginx/ssl/<域名>/privkey.pem
+```
+
+目标服务器上的 Nginx 配置必须引用这两个路径。Docker 场景下，证书目录要以相同路径挂载到 Nginx 容器中。
+
+脚本授予部署用户的权限只有：
+
+- 使用 SSH 公钥登录；
+- 写入证书目录；
+- 免密执行指定的 nginx -t 和 reload 命令。
+
+不要让部署用户使用 root SSH 登录，也不要给它配置需要交互输入密码的命令。
+
+### 在控制台添加服务器
+
+打开服务器，填写：
+
+- 名称：例如 生产 Nginx - Tokyo。
+- 主机和 SSH 端口，默认端口为 22。
+- 用户名，默认是脚本创建的 cert。
+- 主机指纹：点击“获取指纹”，或者在可信终端执行控制台给出的 ssh-keyscan 命令后粘贴 SHA256:...。
+- 是否启用：停用后不会接收后续自动或手动部署。
+
+高级配置通常保持默认：
+
+| 项目 | 默认值 |
 | --- | --- |
-| 部署前检查 | `sudo -n nginx -t` |
-| reload 命令 | `sudo -n nginx -s reload` |
-| 单台超时 | 30 秒 |
+| 部署前检查 | sudo -n nginx -t |
+| reload 命令 | sudo -n nginx -s reload |
+| 健康检查 | 可选，例如 curl -fsS http://127.0.0.1/health |
+| 单台服务器超时 | 30 秒 |
 
-不要手工跳过主机指纹验证，也不要配置要求交互式密码输入的命令。主机密钥更换时，先在目标服务器确认变更，再重新获取并保存指纹。
+保存后先执行“连接测试”。如果主机更换了 SSH 密钥，先确认确实是预期变更，再重新获取并保存指纹。不要使用 StrictHostKeyChecking=no 或其他跳过主机校验的配置。
 
-### 5. 建立部署策略并执行
+## 第四步：添加证书和部署策略
 
-在**部署策略**中，为每张证书勾选允许自动部署的已启用服务器。首次为某张证书配置策略时，控制台默认选中所有已启用服务器，请按实际范围检查后再保存。
+### 添加证书
 
-回到**证书**点击“立即同步”。Worker 将按以下顺序执行：
+打开证书 → 添加证书，填写：
 
-1. 读取 ohttps，检查额度与最小调用间隔。
-2. 验证证书、私钥和域名 SAN；发现新版本后原子保存。
-3. 为该证书所有已勾选且已启用的服务器创建部署任务。
-4. 在每台服务器上先校验现有 Nginx 配置，上传临时文件，原子替换，再验证、reload 和可选健康检查。
+- 名称：控制台里的易读名称，例如“生产主站”。
+- 域名：必须包含在证书 SAN 中，例如 example.com。
+- ohttps 证书 ID：来自 ohttps 的 certificateId。
+- 提前续期天数：可覆盖全局默认值，通常保持 20 天。
 
-同一台服务器使用多张独立证书时，部署会按每张证书的域名自动使用不同目录，例如 `/etc/nginx/ssl/example.com/fullchain.pem` 和 `/etc/nginx/ssl/other.example.com/fullchain.pem`。部署会创建缺失的父目录；Nginx 配置也必须分别引用对应的证书与私钥路径。
+没有本地缓存时，Worker 会在下一次扫描中自动获取证书。也可以点击“立即同步”马上创建同步任务。手动同步会消耗 ohttps 调用额度，请只在需要时使用。
 
-在**任务**页面打开任务详情，查看每台服务器的状态和日志。首次接入建议先只把低风险服务器纳入策略，验证连接、路径和命令成功后，再扩展到生产服务器；需要 dry-run 时可通过认证 API 创建任务。
+### 建立部署策略
+
+打开部署策略，为每张证书勾选允许自动部署的已启用服务器。首次配置时，界面可能默认选中所有已启用服务器，请根据实际范围检查后保存。
+
+证书没有绑定服务器时，仍会安全地保存在本地，但不会推送到远程主机。
+
+### 做第一次部署
+
+建议先用一张低风险证书验证完整流程：
+
+1. 点击“立即同步”。
+2. 在同步任务中确认 Worker 正在执行。
+3. 查看证书是否通过 PEM、私钥匹配、域名和有效期校验。
+4. 查看部署任务中的每台服务器状态。
+5. 到目标服务器检查 Nginx 配置和 HTTPS 访问。
+
+部署流程是：检查 Nginx 配置 → 上传临时文件 → 原子替换 → 再次验证 → reload → 可选健康检查。中间步骤失败时会尽量回滚远端文件，不会主动删除上一份可用证书。
 
 ## 日常使用
 
 ### 自动续期
 
-Worker 按“设置”中的扫描频率读取每张启用证书的本地版本。扫描本身不会调用 ohttps。首次没有本地缓存时自动获取证书；已有缓存时，仅在进入续期窗口后排队同步。窗口内按最小调用间隔持续检查，即使上游暂时返回旧版本或同步失败，也会继续检查，直至拿到新证书；每日调用上限始终生效。本地扫描不会推迟下一次上游检查。旧版的“每版本一次”标记不再阻止续期。
+Worker 会按照扫描周期读取本地证书。扫描本身不会每次都调用 ohttps：
 
-Worker 独立核对当前证书版本与已启用的自动部署目标，补齐首次部署、新增目标及未完成的部署。失败目标每小时重试，已经成功的目标不会重复部署，显式取消的当前版本任务不会被自动重建。Worker 重启或接手失效租约后会恢复中断的同步与部署任务，并保留已成功目标。用户完成凭据、证书与目标配置后无需保持登录。
+- 没有本地版本时，会自动获取。
+- 已有版本时，只有进入提前续期窗口才会检查上游。
+- 受到每证书最小调用间隔和每日调用上限保护。
+- 上游返回旧版本或暂时失败时，Worker 会在后续时间继续检查，不会永久停止。
+- 新证书同步成功后，会按部署策略自动创建部署任务。
+- 失败的服务器大约每小时重试；已经成功的服务器不会重复部署。
+- Worker 重启或租约切换后，会恢复未完成的同步和部署任务。
 
-手动“立即同步”是强制同步，会绕过正常续期时机，但仍会消耗调用额度并可能产生 ohttps 费用。只在明确需要检查远端新版本时使用。
+完成配置后不需要一直保持登录，Worker 会在后台继续工作。
 
-### 任务、日志与重试
+### 手动同步和部署
 
-- **任务**：查看队列、运行、成功、部分成功、失败和取消状态；正在执行的任务可以取消，未成功任务可以按原策略重试。
-- **同步历史**：查看证书同步阶段、错误摘要和日志。相同版本已成功的目标不会重复部署；失败目标会自动重试。
-- **审计与活动**：按证书、服务器、状态和时间筛选。日志使用 SSE 实时显示，断线后可按任务 ID 从历史记录恢复。
-- **通知**：配置 Bark 推送 URL 后，系统会向该 URL 发送 JSON `POST`。每条通知都不包含私钥、完整证书或原始密钥。
+“立即同步”会强制向 ohttps 发起请求，仍然受到额度保护并可能产生费用。
 
-Bark 请求体的形状如下：
+“部署证书”会使用本地已经验证过的证书版本推送到选定服务器，不会自动从 ohttps 获取新证书。
+
+### 查看任务、日志和活动
+
+打开活动与日志可以查看：
+
+- 证书同步阶段和错误摘要；
+- 每个部署任务和每台服务器的结果；
+- 实时 SSH 部署日志；
+- 审计记录，包括证书、服务器、部署策略和系统设置的变更；
+- 失败任务的重试和取消操作。
+
+同步成功但某一台服务器失败时，其他已经成功的服务器不会被重复部署；失败目标会保留并可以手动重试。
+
+### Bark 通知
+
+配置 Bark URL 后，系统会发送证书同步、部署成功或失败、证书即将过期等通知。通知不包含私钥、完整证书或原始 API Key。
+
+通知使用 JSON POST，大致形状如下：
 
 ```json
 {
@@ -216,36 +360,152 @@ Bark 请求体的形状如下：
 }
 ```
 
-## 备份、恢复与观测
+投递失败会自动重试。可以在系统通知中查看投递历史和失败原因摘要。
 
-- 在没有同步、部署或恢复任务写入时，用已登录管理员会话请求 `GET /api/backup` 下载 SQLite 数据库；数据库本身包含敏感配置，必须加密并异地保存。
-- 在同一无写入时间窗口，备份 Compose bind mount `${OHTTPS_DATA_DIR:-./data}` 下的 `certs` 目录；否则数据库记录可能指向缺失或不匹配的证书版本。日志归档保存在 `logs` 目录，可按审计要求一并备份。
-- 恢复通过 `POST /api/backup` 完成，必须带 `x-confirm-restore: yes`。恢复前停止 Worker、将公网/反向代理流量切走，但保留受信任的维护路径到 Web；系统会保留一个仅用于数据库的 `.before-restore` 回退文件。恢复证书版本时，必须同时恢复与数据库快照配套的 `certs` 目录。完整步骤和恢复目标见 [灾备与恢复](docs/disaster-recovery.md)。
-- `GET /api/metrics` 返回基础 Prometheus 文本指标；`GET /api/health` 返回 Web 与 Worker 心跳状态。请在反向代理或监控网络内访问这些接口。
+## 备份与恢复
 
-## 安全边界
+数据库里包含 ohttps 凭据、SSH 私钥、Bark URL、服务器配置和认证数据；certs 目录包含数据库所引用的证书版本。备份时必须把它们当作一组数据处理。
 
-- 当前版本只支持**单管理员**和**中心端 SSH push**；不提供多用户、RBAC、密码 SSH 登录或 pull agent。
-- ohttps 凭据、共享 SSH 私钥和包含 Bark 设备 Key 的推送 URL 按该自托管 MVP 的设计明文保存在 SQLite。数据库备份包含这些凭据；完整恢复还需要与之配套的证书目录快照。数据目录、备份和容器主机访问权限必须按最高敏感级别管理。
-- 为站点配置 HTTPS 反向代理，设置正确的 `BETTER_AUTH_URL`，限制 `3000` 端口只对反向代理或可信网络开放，并设置长期随机 `AUTH_SECRET`。
-- 目标服务器必须使用专用低权限用户和已验证的主机指纹。不要使用 `StrictHostKeyChecking=no`、共享 root SSH 密钥，或在 reload 命令中放入不受控制的 shell 内容。
-- API、日志、前端和 Bark 推送都不应暴露私钥或完整 PEM；看到此类内容时，立即轮换受影响凭据并检查日志与备份访问范围。
-- 生产前至少完成一次备份恢复演练和一次 dry-run。此项目提供基础指标与恢复接口，但不替代网络隔离、备份加密、监控告警和运维响应流程。
+### 备份
 
-## 本地开发与验证
+1. 选择没有同步、部署或恢复任务写入的时间窗口。必要时先停止 Worker。
+2. 使用已经登录的管理员会话下载数据库：
 
-开发模式仍需同时运行 Web 与 Worker：
+   ```bash
+   curl -fL \
+     -H 'Cookie: 你的会话 Cookie' \
+     http://localhost:3000/api/backup \
+     -o ohttps-deploy-$(date +%F).db
+   ```
+
+   不要把真实 Cookie 写入脚本、Shell 历史或日志。也可以通过浏览器开发者工具或受信任的备份程序调用该接口。
+3. 在同一时间点备份数据目录中的 certs：
+
+   ```bash
+   tar -C data -czf certs-$(date +%F).tar.gz certs
+   ```
+
+4. 按最高敏感级别加密并异地保存数据库、证书目录和需要保留的 logs 归档。
+
+建议每天备份一次，至少保留 30 个版本，并每季度完成一次完整恢复演练。
+
+### 恢复
+
+恢复会覆盖当前数据库，操作前先确认备份文件和证书目录来自同一时间点：
+
+1. 停止 Worker，暂停公网或反向代理流量，并确认没有正在运行的部署。保留一条受信任的维护路径访问 Web。
+2. 登录控制台后，把 SQLite 文件以原始二进制内容提交到 POST /api/backup，并带上请求头：
+
+   ```text
+   x-confirm-restore: yes
+   ```
+
+3. 同时把配套的 certs 快照恢复到数据目录。
+4. 保留接口生成的 <数据库路径>.before-restore 文件。它是恢复前数据库的回退副本。
+5. Docker Compose 会在 Worker 启动时运行迁移；本地开发环境先执行：
+
+   ```bash
+   pnpm run db:migrate
+   ```
+
+6. 启动服务后检查 /api/health、当前证书版本、服务器配置和最近任务。必要时先做 dry-run，再恢复自动调度和公网流量。
+
+如果恢复后的数据库有问题，可以把 .before-restore 文件移回数据库路径，但它只回退数据库，不会回退 certs 目录，所以必须同时使用匹配的证书快照。
+
+灾备目标建议：RPO 24 小时（每天备份），RTO 30 分钟内恢复 Web、Worker 和最近的可用证书版本。
+
+## 健康检查和常见问题
+
+### Worker 显示离线
+
+先查看：
+
+```bash
+docker compose ps
+docker compose logs --tail=200 worker
+curl -fsS http://localhost:3000/api/health
+```
+
+检查 Web 和 Worker 是否使用同一个 data 目录、同一个 DATABASE_URL，以及容器是否有权限读写 /app/data。
+
+### 登录后页面无法打开
+
+- 检查 BETTER_AUTH_URL 是否是浏览器实际访问的 Origin。
+- 反向代理使用 HTTPS 时，不要把内部的 http://web:3000 写入 BETTER_AUTH_URL。
+- 检查浏览器时间和服务器时间是否大幅偏差。
+- Pocket ID 用户要确认自己仍在该 OIDC 客户端允许的用户组中。
+- 本地管理员可以使用密码入口恢复访问。
+
+### Pocket ID 按钮报错
+
+确认 issuer、Client ID、Client Secret 三项同时存在，回调地址完全匹配，OIDC 客户端允许 openid profile email，并且 Pocket ID 可以从 Web 容器访问。查看 docker compose logs web 时只会看到脱敏后的通用错误，不会显示 Client Secret 或令牌。
+
+### SSH 连接失败
+
+1. 从 Web 容器所在网络检查目标主机和端口是否可达。
+2. 在控制台重新获取并核对 SHA-256 主机指纹。
+3. 确认目标服务器已经放入配套公钥，用户名称和端口正确。
+4. 确认私钥没有 Passphrase，且目标用户可以写入证书目录。
+5. 确认 sudo -n nginx -t 和 reload 命令不需要交互输入。
+6. 目标主机上的 Nginx 配置必须引用控制台显示的证书路径。
+
+### 证书同步失败
+
+检查 ohttps API ID、API Key、certificateId、中心机外网连接、证书是否已经进入续期窗口，以及每日调用限额。手动同步会绕过续期窗口，但不会绕过调用限额。
+
+## API 和监控入口
+
+这些接口需要登录，除健康检查和认证接口外都受到会话与同源 CSRF 保护：
+
+| 接口 | 用途 |
+| --- | --- |
+| GET /api/health | 查看 Web 和 Worker 状态 |
+| GET /api/metrics | Prometheus 文本指标 |
+| GET /api/backup | 下载 SQLite 数据库备份 |
+| POST /api/backup | 在明确确认后恢复 SQLite 数据库 |
+| /api/certificates | 证书资产和同步任务 |
+| /api/servers | 目标服务器和连接测试 |
+| /api/deployment-policies | 证书到服务器的自动部署策略 |
+| /api/deployments | 创建、查询、取消和重试部署 |
+| /api/logs、/api/audit-events | 执行日志和审计活动 |
+| /api/notifications | Bark 通知历史 |
+
+HTTP 请求只负责创建、查询、取消或重试任务；同步和 SSH 部署由 Worker 执行，不会让浏览器请求长时间等待。
+
+## 安全与边界
+
+- 本地恢复账号是固定的 admin；Pocket ID 用户以个人身份登录，但获准用户权限相同。
+- 项目不提供用户管理页、RBAC、多级权限、密码 SSH 登录或 pull agent。
+- ohttps 凭据、SSH 私钥、Bark 设备 Key 和认证数据会保存在本地 SQLite。数据库备份因此也是敏感备份。
+- Web 和 Worker 必须使用 HTTPS 反向代理、长期随机的 AUTH_SECRET 和受限网络边界。
+- SSH 连接必须校验主机指纹。不要使用 StrictHostKeyChecking=no，不要共享 root SSH 私钥。
+- API、日志、前端和通知都不应输出私钥、完整 PEM、访问令牌或 Client Secret。
+- 生产上线前至少完成一次备份恢复演练和一次低风险 dry-run。
+- data 目录的备份、恢复和删除都可能影响线上证书部署，请先停止 Worker 并确认外部流量状态。
+
+项目的部署模式是“中心端 SSH push”：中心机主动把证书推送到目标服务器。它不支持让目标服务器反向拉取证书，也不支持每台服务器单独配置不同的 SSH 私钥。
+
+## 本地开发
+
+本地开发需要同时运行 Web 和 Worker：
 
 ```bash
 cp .env.example .env
-# 将 BETTER_AUTH_URL 改为 http://localhost:3000，并设置本地 AUTH_SECRET
+# 将 BETTER_AUTH_URL 设置为 http://localhost:3000
+# AUTH_SECRET 设置为至少 32 个字符的本地随机值
 pnpm install
 pnpm run db:migrate
+pnpm run dev:all
+```
+
+也可以分开运行：
+
+```bash
 pnpm run dev
 pnpm run worker
 ```
 
-提交前运行：
+提交代码前运行：
 
 ```bash
 pnpm test
@@ -254,8 +514,20 @@ pnpm build
 docker build .
 ```
 
-`pnpm test` 自动发现 `tests/*.test.ts`，每个文件在独立进程中串行运行；新增测试文件无需修改 `package.json`。单独运行一项测试可使用 `pnpm exec tsx --test tests/automation.test.ts`。
+单独运行一个测试文件：
 
-`app/worker.ts` 只负责启动。`app/worker/runtime.ts` 管理租约、轮询和进程生命周期，`certificate-sync.ts` 处理扫描与同步，`deployments.ts` 执行部署，`notifications.ts` 处理通知；`context.ts` 保存共享配置和可替换的外部依赖。自动部署补齐和中断恢复位于 `automation.ts`。
+```bash
+pnpm exec tsx --test tests/automation.test.ts
+```
 
-项目使用 Next.js App Router、TypeScript、Drizzle、SQLite/libSQL、shadcn/ui、`ssh2` 和 Docker Compose。贡献约束、协议和安全不变量见 [AGENTS.md](AGENTS.md)。
+## 项目边界和贡献提示
+
+项目使用 Next.js App Router、TypeScript、Drizzle、SQLite/libSQL、Better Auth、shadcn/ui、ssh2 和 Docker Compose。所有耗时任务位于 Worker；ohttps 协议、证书校验、部署和通知都有可替换的测试适配器。
+
+改动数据模型时，先添加可重复执行的 Drizzle migration，再更新 schema、领域逻辑、Route Handler 和界面。外部系统测试不能访问真实 ohttps 凭据、生产主机或真实 Webhook。提交信息使用 Conventional Commits，例如：
+
+```text
+feat(auth): add Pocket ID user sessions
+fix(worker): retry failed certificate deployment
+docs: rewrite user guide
+```
