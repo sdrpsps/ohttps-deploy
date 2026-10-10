@@ -9,7 +9,7 @@ async function run() {
   try {
     const response = await POST(new Request("http://localhost/api/settings/test-bark", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ webhookUrl: "https://api.day.app/device-key" }) }));
     assert.equal(response.status, 200);
-    assert.deepEqual(JSON.parse(body), { title: "ohttps-deploy · Bark 测试消息", body: "事件：notification.test\n对象：notification", group: "ohttps-deploy" });
+    assert.deepEqual(JSON.parse(body), { title: "ohttps-deploy · Bark 测试消息", body: "Bark 推送连接正常，可以接收证书和部署通知。", group: "ohttps-deploy" });
   } finally { globalThis.fetch = originalFetch; }
   console.log("Bark test route tests passed");
 }

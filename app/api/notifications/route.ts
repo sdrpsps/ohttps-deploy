@@ -7,7 +7,7 @@ export async function GET() { return NextResponse.json({ data: await db.select({
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null) as { id?: string } | null;
   if (!body?.id) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "notification id is required" } }, { status: 400 });
-  const [row] = await db.update(notifications).set({ status: "pending", nextRetryAt: new Date(), lastError: null, updatedAt: new Date() }).where(eq(notifications.id, body.id)).returning({ id: notifications.id });
+  const [row] = await db.update(notifications).set({ status: "pending", deliveredAt: null, nextRetryAt: new Date(), lastError: null, updatedAt: new Date() }).where(eq(notifications.id, body.id)).returning({ id: notifications.id });
   if (!row) return NextResponse.json({ error: { code: "NOT_FOUND", message: "notification not found" } }, { status: 404 });
   return NextResponse.json({ data: row });
 }

@@ -7,7 +7,7 @@ import { redactSensitive } from "../domain/ohttps-client";
 import { shouldScheduleSync } from "../domain/renewal";
 import { createLogger } from "../lib/logger";
 import { workerAdapters, workerContext } from "./context";
-import { hasRecentCertificateAlert, queueNotification } from "./notifications";
+import { notifyCertificateRecovery, notifySyncRecovery, queueNotification } from "./notifications";
 import { enqueueSyncJob } from "./sync-jobs";
 import { reserveOhttpsCall } from "./daily-limit";
 import { reconcileAutoDeployments } from "./automation";
@@ -25,7 +25,7 @@ export async function scanCertificates() {
       const remaining = current ? current.notAfter.getTime() - now.getTime() : Infinity;
       if (remaining <= 0) await queueNotification("certificate.expired", "certificate", certificate.id, "failure");
       else if (remaining <= certificate.renewBeforeDays * 24 * 60 * 60 * 1000) await queueNotification("certificate.expiring", "certificate", certificate.id, "warning");
-      else if (current && await hasRecentCertificateAlert(certificate.id)) await queueNotification("certificate.recovered", "certificate", certificate.id, "success");
+      else if (current) await notifyCertificateRecovery(certificate.id);
       // Persist actual upstream attempts, including failed requests. Local scans,
       // missing credentials and exhausted daily quota are not upstream calls.
       const [attempt] = await db.select({ value: settings.value }).from(settings)
@@ -84,6 +84,7 @@ export async function processSyncJob(jobId: string) {
     if (unchanged && registered?.fingerprint === parsed.fingerprint) {
       await db.update(certificates).set({ expiresAt: parsed.notAfter, lastCheckedAt: now, lastSyncAt: now, updatedAt: now }).where(eq(certificates.id, certificate.id));
       await progress("succeeded", `远端证书与本地版本一致 (到期时间: ${parsed.notAfter.toISOString().slice(0, 10)})，无需更新`);
+      await notifySyncRecovery(certificate.id);
       return finishSyncJob(jobId, "succeeded");
     }
     await progress("saving", `发现新证书版本 (到期时间: ${parsed.notAfter.toISOString().slice(0, 10)})，正在安全保存`);
@@ -96,7 +97,7 @@ export async function processSyncJob(jobId: string) {
     });
     await progress("deploying", "新版本已保存，正在按部署策略创建部署任务");
     await reconcileAutoDeployments(new Date(workerAdapters.now()), { certificateId: certificate.id, syncJobId: jobId });
-    await queueNotification("certificate.synced", "certificate", certificate.id, "success");
+    await queueNotification("certificate.synced", "certificate", certificate.id, "success", undefined, `sync:${jobId}`);
     await progress("succeeded", "同步完成；如有已勾选的部署服务器，将在部署任务中继续执行");
     await finishSyncJob(jobId, "succeeded");
   } catch (error) {

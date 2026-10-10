@@ -193,7 +193,7 @@ export async function processDeployment(deploymentId: string) {
     await logProgress(`所有服务器部署完毕：${succeededCount} 成功，${failed} 失败`);
   }
   await db.update(deployments).set({ status, finishedAt: new Date(workerAdapters.now()), errorSummary: failed ? `${failed} target(s) failed` : null, updatedAt: new Date(workerAdapters.now()) }).where(and(eq(deployments.id, deploymentId), eq(deployments.status, "running")));
-  await queueNotification(`deployment.${status}`, "deployment", deploymentId, status === "succeeded" ? "success" : "failure", failed ? `${failed} target(s) failed` : undefined);
+  await queueNotification(`deployment.${status}`, "deployment", deploymentId, status === "succeeded" ? "success" : status === "partial" ? "warning" : "failure", failed ? `${failed} 台服务器部署失败` : undefined);
 }
 
 export async function failDeployment(id: string, message: string) {
