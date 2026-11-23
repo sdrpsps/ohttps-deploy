@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { redactSensitive } from "./ohttps-client";
 
 export type WebhookEvent = {
@@ -71,18 +72,32 @@ export function toBarkPayload(event: WebhookEvent) {
   };
 }
 
-export async function postWebhook(event: WebhookEvent, url: string, fetchImpl: typeof fetch = fetch) {
+export async function postWebhook(
+  event: WebhookEvent,
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+  options?: { secret?: string }
+) {
   const body = JSON.stringify(toBarkPayload(event));
+  const secret = options?.secret?.trim();
+  const headers: Record<string, string> = {
+    "content-type": "application/json; charset=utf-8",
+    "x-ohttps-deploy-event-id": event.eventId,
+  };
+  if (secret) {
+    const signature = createHmac("sha256", secret).update(body).digest("hex");
+    headers["x-ohttps-deploy-signature"] = `sha256=${signature}`;
+  }
   try {
     const response = await fetchImpl(url, {
       method: "POST",
-      headers: { "content-type": "application/json; charset=utf-8" },
+      headers,
       body,
       signal: AbortSignal.timeout(10_000),
     });
-    const summary = redactSensitive((await response.text().catch(() => "")).slice(0, 500));
+    const summary = redactSensitive((await response.text().catch(() => "")).slice(0, 500), secret);
     return response.ok ? { ok: true as const, summary } : { ok: false as const, error: `webhook returned HTTP ${response.status}`, summary };
   } catch (error) {
-    return { ok: false as const, error: redactSensitive(error instanceof Error ? error.message : "webhook request failed"), summary: "" };
+    return { ok: false as const, error: redactSensitive(error instanceof Error ? error.message : "webhook request failed", secret), summary: "" };
   }
 }

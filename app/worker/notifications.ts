@@ -85,31 +85,37 @@ export async function queueNotification(eventType: string, objectType: string, o
   await db.insert(notifications).values({ id: randomUUID(), eventId, eventType, objectType, objectId, payloadJson: JSON.stringify(event), createdAt, updatedAt: now }).onConflictDoNothing();
 }
 
-export async function deliverPendingNotifications() {
+export async function deliverPendingNotifications(concurrency = 4) {
   if (!workerContext.runtimeSettings.webhookUrl) return;
   const now = new Date(workerAdapters.now());
   const pending = await db.select().from(notifications)
     .where(or(eq(notifications.status, "pending"), and(eq(notifications.status, "failed"), lte(notifications.nextRetryAt, now), isNull(notifications.deliveredAt))))
     .limit(20);
-  for (const notification of pending) {
-    let event: WebhookEvent;
-    try { event = JSON.parse(notification.payloadJson) as WebhookEvent; }
-    catch {
-      await db.update(notifications).set({ status: "failed", lastError: "stored webhook event is invalid", updatedAt: new Date(workerAdapters.now()) }).where(eq(notifications.id, notification.id));
-      continue;
-    }
-    if (!event.context && event.object.id) {
-      event.context = await notificationContext(event.object.type, event.object.id);
-      await db.update(notifications).set({ payloadJson: JSON.stringify(event) }).where(eq(notifications.id, notification.id));
-    }
-    const result = await postWebhook(event, workerContext.runtimeSettings.webhookUrl);
-    const attempts = notification.attempts + 1;
-    if (result.ok) {
-      await db.update(notifications).set({ status: "delivered", attempts, responseSummary: result.summary, lastError: null, deliveredAt: new Date(workerAdapters.now()), nextRetryAt: null, updatedAt: new Date(workerAdapters.now()) }).where(eq(notifications.id, notification.id));
-      continue;
-    }
-    const delayMs = Math.min(60 * 60 * 1000, 60_000 * 2 ** Math.min(attempts - 1, 6));
-    await db.update(notifications).set({ status: "failed", attempts, lastError: result.error, responseSummary: result.summary, nextRetryAt: new Date(workerAdapters.now() + delayMs), updatedAt: new Date(workerAdapters.now()) }).where(eq(notifications.id, notification.id));
+  const limit = Math.max(1, concurrency);
+  for (let offset = 0; offset < pending.length; offset += limit) {
+    const batch = pending.slice(offset, offset + limit);
+    await Promise.all(batch.map(async (notification) => {
+      let event: WebhookEvent;
+      try { event = JSON.parse(notification.payloadJson) as WebhookEvent; }
+      catch {
+        await db.update(notifications).set({ status: "failed", lastError: "stored webhook event is invalid", updatedAt: new Date(workerAdapters.now()) }).where(eq(notifications.id, notification.id));
+        return;
+      }
+      if (!event.context && event.object.id) {
+        event.context = await notificationContext(event.object.type, event.object.id);
+        await db.update(notifications).set({ payloadJson: JSON.stringify(event) }).where(eq(notifications.id, notification.id));
+      }
+      const result = await postWebhook(event, workerContext.runtimeSettings.webhookUrl, fetch, {
+        secret: workerContext.runtimeSettings.webhookSecret,
+      });
+      const attempts = notification.attempts + 1;
+      if (result.ok) {
+        await db.update(notifications).set({ status: "delivered", attempts, responseSummary: result.summary, lastError: null, deliveredAt: new Date(workerAdapters.now()), nextRetryAt: null, updatedAt: new Date(workerAdapters.now()) }).where(eq(notifications.id, notification.id));
+        return;
+      }
+      const delayMs = Math.min(60 * 60 * 1000, 60_000 * 2 ** Math.min(attempts - 1, 6));
+      await db.update(notifications).set({ status: "failed", attempts, lastError: result.error, responseSummary: result.summary, nextRetryAt: new Date(workerAdapters.now() + delayMs), updatedAt: new Date(workerAdapters.now()) }).where(eq(notifications.id, notification.id));
+    }));
   }
 }
 

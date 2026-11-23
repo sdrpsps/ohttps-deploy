@@ -12,6 +12,7 @@ const schema = z.object({
   ohttpsApiId: z.string().trim().max(200).default(""),
   ohttpsApiKey: z.string().trim().max(500).default(""),
   webhookUrl: z.string().trim().url().or(z.literal("")),
+  webhookSecret: z.string().trim().max(500).default(""),
   renewBeforeDays: z.coerce.number().int().min(1).max(365),
   ohttpsMinIntervalSeconds: z.coerce.number().int().min(60).max(31_536_000),
   ohttpsDailyCallLimit: z.coerce.number().int().min(1).max(100_000),
@@ -19,7 +20,7 @@ const schema = z.object({
   logRetentionDays: z.coerce.number().int().min(1).max(3_650),
 });
 
-const secretKeys = new Set(["ohttps_api_key"]);
+const secretKeys = new Set(["ohttps_api_key", "webhook_secret"]);
 
 function maskSecret(secret: string): string {
   if (!secret) return "";
@@ -44,6 +45,8 @@ export async function GET() {
     schedulerIntervalMinutes: value.schedulerIntervalMinutes,
     logRetentionDays: value.logRetentionDays,
     webhookUrl: value.webhookUrl,
+    webhookSecretMasked: maskSecret(value.webhookSecret),
+    webhookSecretConfigured: Boolean(value.webhookSecret),
     ohttpsApiId: value.ohttpsApiId,
     ohttpsApiKeyMasked: maskSecret(value.ohttpsApiKey),
     ohttpsConfigured: Boolean(value.ohttpsApiId && value.ohttpsApiKey),
@@ -64,6 +67,7 @@ export async function POST(request: Request) {
     saveSetting("log_retention_days", String(value.logRetentionDays)),
     ...(value.ohttpsApiId ? [saveSetting("ohttps_api_id", value.ohttpsApiId)] : []),
     ...(value.ohttpsApiKey ? [saveSetting("ohttps_api_key", value.ohttpsApiKey)] : []),
+    ...(value.webhookSecret ? [saveSetting("webhook_secret", value.webhookSecret)] : []),
   ]);
   await recordAudit(request, "settings.updated", "settings");
   return GET();

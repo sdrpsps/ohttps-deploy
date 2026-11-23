@@ -19,14 +19,23 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 
 const schema = z.object({
-  ohttpsApiId: z.string().max(200), ohttpsApiKey: z.string().max(500), webhookUrl: z.string().url("请输入有效 URL").or(z.literal("")),
-  renewBeforeDays: z.coerce.number().int().min(1).max(365), ohttpsMinIntervalSeconds: z.coerce.number().int().min(60).max(31_536_000), ohttpsDailyCallLimit: z.coerce.number().int().min(1).max(100_000), schedulerIntervalMinutes: z.coerce.number().int().min(1).max(1_440), logRetentionDays: z.coerce.number().int().min(1).max(3_650),
+  ohttpsApiId: z.string().max(200),
+  ohttpsApiKey: z.string().max(500),
+  webhookUrl: z.string().url("请输入有效 URL").or(z.literal("")),
+  webhookSecret: z.string().max(500).optional(),
+  renewBeforeDays: z.coerce.number().int().min(1).max(365),
+  ohttpsMinIntervalSeconds: z.coerce.number().int().min(60).max(31_536_000),
+  ohttpsDailyCallLimit: z.coerce.number().int().min(1).max(100_000),
+  schedulerIntervalMinutes: z.coerce.number().int().min(1).max(1_440),
+  logRetentionDays: z.coerce.number().int().min(1).max(3_650),
 });
 type SettingsForm = z.infer<typeof schema>;
 
-export type SettingsSummary = Omit<SettingsForm, "ohttpsApiKey"> & {
+export type SettingsSummary = Omit<SettingsForm, "ohttpsApiKey" | "webhookSecret"> & {
   ohttpsApiId?: string;
   ohttpsApiKeyMasked?: string;
+  webhookSecretMasked?: string;
+  webhookSecretConfigured?: boolean;
   ohttpsConfigured: boolean;
   sharedSshPrivateKeyConfigured: boolean;
 };
@@ -42,6 +51,7 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onT
         ...settings,
         ohttpsApiId: settings?.ohttpsApiId ?? "",
         ohttpsApiKey: "",
+        webhookSecret: "",
       });
     }
   }, [form, open, settings]);
@@ -141,6 +151,15 @@ export function SettingsDialog({ open, busy, settings, onOpenChange, onSave, onT
                   <Send className="size-3.5" />
                   发送测试消息
                 </Button>
+              </div>
+              <div className="pt-1">
+                <TextField
+                  control={form.control}
+                  name="webhookSecret"
+                  label={settings?.webhookSecretMasked ? `Webhook 签名密钥 (已保存: ${settings.webhookSecretMasked})` : "Webhook 签名密钥（可选）"}
+                  type="password"
+                  placeholder={settings?.webhookSecretMasked ? `留空保持不变 (${settings.webhookSecretMasked})` : "配置后请求将附带 x-ohttps-deploy-signature (HMAC-SHA256)"}
+                />
               </div>
             </section>
 
@@ -307,4 +326,4 @@ function TextField({ control, name, label, type = "text", placeholder, autoCompl
   );
 }
 
-const defaults: SettingsForm = { ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "", renewBeforeDays: 20, ohttpsMinIntervalSeconds: 86400, ohttpsDailyCallLimit: 100, schedulerIntervalMinutes: 60, logRetentionDays: 90 };
+const defaults: SettingsForm = { ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "", webhookSecret: "", renewBeforeDays: 20, ohttpsMinIntervalSeconds: 86400, ohttpsDailyCallLimit: 100, schedulerIntervalMinutes: 60, logRetentionDays: 90 };

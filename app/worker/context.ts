@@ -14,5 +14,5 @@ export const workerAdapters = {
 
 // Shared by the Worker modules; only the runtime refreshes settings and lease state.
 export const workerContext: { runtimeSettings: RuntimeSettings; leaseSignal?: AbortSignal } = {
-  runtimeSettings: { ...runtimeDefaults, ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "" },
+  runtimeSettings: { ...runtimeDefaults, ohttpsApiId: "", ohttpsApiKey: "", webhookUrl: "", webhookSecret: "" },
 };
