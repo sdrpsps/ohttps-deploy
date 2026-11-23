@@ -1,10 +1,49 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { auth, isAuthorizedUser } from "@/lib/auth";
 
 // ponytail: process-local limiter; use a shared store when running multiple web replicas.
 const requests = new Map<string, { count: number; resetAt: number }>();
+export const rateLimitBuckets = requests;
+
+const MAX_RATE_LIMIT_ENTRIES = 10_000;
+const PRUNE_INTERVAL_MS = 60_000;
+let lastPrunedAt = 0;
 
 export const runtime = "nodejs";
+
+export function pruneRateLimitMap(now = Date.now(), maxEntries = MAX_RATE_LIMIT_ENTRIES) {
+  for (const [key, entry] of requests.entries()) {
+    if (entry.resetAt <= now) {
+      requests.delete(key);
+    }
+  }
+  if (requests.size >= maxEntries) {
+    for (const key of requests.keys()) {
+      requests.delete(key);
+      if (requests.size < maxEntries) break;
+    }
+  }
+  lastPrunedAt = now;
+}
+
+function isMetricsBearerAuthorized(request: NextRequest): boolean {
+  const configuredToken = process.env.METRICS_BEARER_TOKEN?.trim();
+  if (!configuredToken) return false;
+  const authHeader = request.headers.get("authorization") ?? "";
+  if (!authHeader.startsWith("Bearer ")) return false;
+  const provided = authHeader.slice(7).trim();
+  const a = Buffer.from(provided, "utf8");
+  const b = Buffer.from(configuredToken, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function isSseEventsRequest(request: NextRequest, path: string): boolean {
+  return (
+    request.method === "GET" &&
+    /^\/api\/(deployments|certificate-sync-jobs)\/[^/]+\/events$/.test(path)
+  );
+}
 
 function trustedOrigin(request: NextRequest) {
   try {
@@ -26,17 +65,27 @@ export async function middleware(request: NextRequest) {
     /\.(png|jpg|jpeg|gif|svg|ico|webp)$/.test(path);
   if (isPublicPath) return NextResponse.next();
 
-  // 限制单个来源的请求频率，避免登录和管理接口被滥用。
-  const key = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  const now = Date.now();
-  const current = requests.get(key);
-  if (!current || current.resetAt <= now) {
-    requests.set(key, { count: 1, resetAt: now + 60_000 });
-  } else if (++current.count > 120) {
-    return NextResponse.json(
-      { error: { code: "RATE_LIMITED", message: "请求过于频繁" } },
-      { status: 429, headers: { "retry-after": "60" } },
-    );
+  // 允许配置了 METRICS_BEARER_TOKEN 的 Prometheus 采集器携带匹配 Bearer Token 访问 /api/metrics。
+  if (path === "/api/metrics" && isMetricsBearerAuthorized(request)) {
+    return NextResponse.next();
+  }
+
+  // 限制单个来源的请求频率，避免登录和管理接口被滥用；只读 SSE 实时事件流不计入频控。
+  if (!isSseEventsRequest(request, path)) {
+    const key = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    const now = Date.now();
+    if (now - lastPrunedAt >= PRUNE_INTERVAL_MS || requests.size >= MAX_RATE_LIMIT_ENTRIES) {
+      pruneRateLimitMap(now);
+    }
+    const current = requests.get(key);
+    if (!current || current.resetAt <= now) {
+      requests.set(key, { count: 1, resetAt: now + 60_000 });
+    } else if (++current.count > 120) {
+      return NextResponse.json(
+        { error: { code: "RATE_LIMITED", message: "请求过于频繁" } },
+        { status: 429, headers: { "retry-after": "60" } },
+      );
+    }
   }
 
   // 写请求必须来自当前站点，防止跨站请求伪造。
