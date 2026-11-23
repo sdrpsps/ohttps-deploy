@@ -48,16 +48,24 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const [deployment] = await db.select().from(deployments).where(eq(deployments.id, id)).limit(1);
-  if (!deployment) return NextResponse.json({ error: { code: "NOT_FOUND", message: "deployment not found" } }, { status: 404 });
-  if (deployment.status === "running") {
+  const outcome = await db.transaction(async (tx) => {
+    const [deployment] = await tx.select().from(deployments).where(eq(deployments.id, id)).limit(1);
+    if (!deployment) return "not_found" as const;
+    if (deployment.status === "running") return "running" as const;
+
+    await tx.delete(logs).where(eq(logs.deploymentId, id));
+    await tx.delete(deploymentTargets).where(eq(deploymentTargets.deploymentId, id));
+    await tx.delete(deploymentCertificates).where(eq(deploymentCertificates.deploymentId, id));
+    await tx.delete(deployments).where(eq(deployments.id, id));
+    return "deleted" as const;
+  });
+
+  if (outcome === "not_found") {
+    return NextResponse.json({ error: { code: "NOT_FOUND", message: "deployment not found" } }, { status: 404 });
+  }
+  if (outcome === "running") {
     return NextResponse.json({ error: { code: "CANNOT_DELETE_RUNNING", message: "cannot delete a running deployment" } }, { status: 409 });
   }
-
-  await db.delete(logs).where(eq(logs.deploymentId, id));
-  await db.delete(deploymentTargets).where(eq(deploymentTargets.deploymentId, id));
-  await db.delete(deploymentCertificates).where(eq(deploymentCertificates.deploymentId, id));
-  await db.delete(deployments).where(eq(deployments.id, id));
 
   return NextResponse.json({ data: { success: true } });
 }

@@ -74,7 +74,11 @@ export const deployments = sqliteTable("deployments", {
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
   errorSummary: text("error_summary"),
   ...timestamps,
-}, (table) => ({ deploymentStatusIdx: index("deployments_status_idx").on(table.status) }));
+}, (table) => ({
+  deploymentStatusIdx: index("deployments_status_idx").on(table.status),
+  deploymentStatusCreatedAtIdx: index("deployments_status_created_at_idx").on(table.status, table.createdAt),
+  deploymentCertificateCreatedAtIdx: index("deployments_certificate_created_at_idx").on(table.certificateId, table.createdAt),
+}));
 
 export const deploymentCertificates = sqliteTable("deployment_certificates", {
   id: text("id").primaryKey(),
@@ -113,6 +117,8 @@ export const logs = sqliteTable("logs", {
   syncJobSequenceIdx: uniqueIndex("logs_sync_job_sequence_idx").on(table.syncJobId, table.sequence),
   syncJobIdx: index("logs_sync_job_idx").on(table.syncJobId),
   logCreatedIdx: index("logs_created_at_idx").on(table.createdAt),
+  logTargetIdx: index("logs_target_id_idx").on(table.targetId),
+  logDeploymentCreatedIdx: index("logs_deployment_created_at_idx").on(table.deploymentId, table.createdAt),
 }));
 
 export const notifications = sqliteTable("notifications", {
@@ -130,7 +136,11 @@ export const notifications = sqliteTable("notifications", {
   nextRetryAt: integer("next_retry_at", { mode: "timestamp_ms" }),
   deliveredAt: integer("delivered_at", { mode: "timestamp_ms" }),
   ...timestamps,
-}, (table) => ({ eventUnique: uniqueIndex("notifications_event_channel_idx").on(table.eventId, table.channel) }));
+}, (table) => ({
+  eventUnique: uniqueIndex("notifications_event_channel_idx").on(table.eventId, table.channel),
+  statusNextRetryIdx: index("notifications_status_next_retry_at_idx").on(table.status, table.nextRetryAt),
+  objectCreatedAtIdx: index("notifications_object_created_at_idx").on(table.objectType, table.objectId, table.createdAt),
+}));
 
 export const certificateSyncJobs = sqliteTable("certificate_sync_jobs", {
   id: text("id").primaryKey(),
@@ -143,7 +153,11 @@ export const certificateSyncJobs = sqliteTable("certificate_sync_jobs", {
   startedAt: integer("started_at", { mode: "timestamp_ms" }),
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
   ...timestamps,
-}, (table) => ({ syncJobStatusIdx: index("certificate_sync_jobs_status_idx").on(table.status) }));
+}, (table) => ({
+  syncJobStatusIdx: index("certificate_sync_jobs_status_idx").on(table.status),
+  syncJobStatusCreatedAtIdx: index("certificate_sync_jobs_status_created_at_idx").on(table.status, table.createdAt),
+  syncJobCertificateStatusIdx: index("certificate_sync_jobs_certificate_status_idx").on(table.certificateId, table.status),
+}));
 
 export const auditEvents = sqliteTable("audit_events", {
   id: text("id").primaryKey(),
@@ -155,7 +169,10 @@ export const auditEvents = sqliteTable("audit_events", {
   errorSummary: text("error_summary"),
   metadataJson: text("metadata_json"),
   ...timestamps,
-}, (table) => ({ auditObjectIdx: index("audit_events_object_idx").on(table.objectType, table.objectId) }));
+}, (table) => ({
+  auditObjectIdx: index("audit_events_object_idx").on(table.objectType, table.objectId),
+  auditCreatedAtIdx: index("audit_events_created_at_idx").on(table.createdAt),
+}));
 
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),

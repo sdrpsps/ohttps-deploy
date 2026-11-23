@@ -38,33 +38,42 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
   }
 
-  const [row] = Object.keys(certUpdates).length > 0
-    ? await db.update(certificates).set({ ...certUpdates, updatedAt: new Date() }).where(eq(certificates.id, id)).returning()
-    : await db.select().from(certificates).where(eq(certificates.id, id)).limit(1);
-  if (!row) return NextResponse.json({ error: { code: "NOT_FOUND", message: "certificate not found" } }, { status: 404 });
-  if (serverIds !== undefined) {
-    const uniqueIds = [...new Set(serverIds)];
-    await db.delete(certificateTargets).where(eq(certificateTargets.certificateId, id));
-    if (uniqueIds.length > 0) {
-      await db.insert(certificateTargets).values(uniqueIds.map((serverId) => ({ certificateId: id, serverId, autoDeploy: true })));
+  const row = await db.transaction(async (tx) => {
+    const [updated] = Object.keys(certUpdates).length > 0
+      ? await tx.update(certificates).set({ ...certUpdates, updatedAt: new Date() }).where(eq(certificates.id, id)).returning()
+      : await tx.select().from(certificates).where(eq(certificates.id, id)).limit(1);
+    if (!updated) return undefined;
+    if (serverIds !== undefined) {
+      const uniqueIds = [...new Set(serverIds)];
+      await tx.delete(certificateTargets).where(eq(certificateTargets.certificateId, id));
+      if (uniqueIds.length > 0) {
+        await tx.insert(certificateTargets).values(uniqueIds.map((serverId) => ({ certificateId: id, serverId, autoDeploy: true })));
+      }
+      await tx.insert(settings).values({ key: `deployment_policy_configured_${id}`, value: "1" }).onConflictDoUpdate({ target: settings.key, set: { value: "1", updatedAt: new Date() } });
     }
-    await db.insert(settings).values({ key: `deployment_policy_configured_${id}`, value: "1" }).onConflictDoUpdate({ target: settings.key, set: { value: "1", updatedAt: new Date() } });
-  }
+    return updated;
+  });
+  if (!row) return NextResponse.json({ error: { code: "NOT_FOUND", message: "certificate not found" } }, { status: 404 });
   await recordAudit(request, "certificate.updated", "certificate", id);
   return NextResponse.json({ data: row });
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const [[certificate], [version], [deployment]] = await Promise.all([
-    db.select({ id: certificates.id }).from(certificates).where(eq(certificates.id, id)).limit(1),
-    db.select({ id: certificateVersions.id }).from(certificateVersions).where(eq(certificateVersions.certificateId, id)).limit(1),
-    db.select({ id: deployments.id }).from(deployments).where(eq(deployments.certificateId, id)).limit(1),
-  ]);
-  if (!certificate) return NextResponse.json({ error: { code: "NOT_FOUND", message: "certificate not found" } }, { status: 404 });
-  if (version || deployment) return NextResponse.json({ error: { code: "HAS_HISTORY", message: "certificate has version or deployment history; disable it instead" } }, { status: 409 });
-  await db.delete(certificateTargets).where(eq(certificateTargets.certificateId, id));
-  await db.delete(certificates).where(eq(certificates.id, id));
+  const outcome = await db.transaction(async (tx) => {
+    const [[certificate], [version], [deployment]] = await Promise.all([
+      tx.select({ id: certificates.id }).from(certificates).where(eq(certificates.id, id)).limit(1),
+      tx.select({ id: certificateVersions.id }).from(certificateVersions).where(eq(certificateVersions.certificateId, id)).limit(1),
+      tx.select({ id: deployments.id }).from(deployments).where(eq(deployments.certificateId, id)).limit(1),
+    ]);
+    if (!certificate) return "not_found" as const;
+    if (version || deployment) return "has_history" as const;
+    await tx.delete(certificateTargets).where(eq(certificateTargets.certificateId, id));
+    await tx.delete(certificates).where(eq(certificates.id, id));
+    return "deleted" as const;
+  });
+  if (outcome === "not_found") return NextResponse.json({ error: { code: "NOT_FOUND", message: "certificate not found" } }, { status: 404 });
+  if (outcome === "has_history") return NextResponse.json({ error: { code: "HAS_HISTORY", message: "certificate has version or deployment history; disable it instead" } }, { status: 409 });
   await recordAudit(request, "certificate.deleted", "certificate", id);
   return new NextResponse(null, { status: 204 });
 }

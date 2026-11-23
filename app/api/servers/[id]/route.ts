@@ -36,18 +36,23 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const [server] = await db.select({ id: servers.id }).from(servers).where(eq(servers.id, id)).limit(1);
-  if (!server) return NextResponse.json({ error: { code: "NOT_FOUND", message: "server not found" } }, { status: 404 });
+  const deleted = await db.transaction(async (tx) => {
+    const [server] = await tx.select({ id: servers.id }).from(servers).where(eq(servers.id, id)).limit(1);
+    if (!server) return false;
 
-  const targets = await db.select({ id: deploymentTargets.id }).from(deploymentTargets).where(eq(deploymentTargets.serverId, id));
-  if (targets.length > 0) {
-    const targetIds = targets.map((t) => t.id);
-    await db.delete(logs).where(inArray(logs.targetId, targetIds));
-    await db.delete(deploymentTargets).where(eq(deploymentTargets.serverId, id));
-  }
+    const targets = await tx.select({ id: deploymentTargets.id }).from(deploymentTargets).where(eq(deploymentTargets.serverId, id));
+    if (targets.length > 0) {
+      const targetIds = targets.map((t) => t.id);
+      await tx.delete(logs).where(inArray(logs.targetId, targetIds));
+      await tx.delete(deploymentTargets).where(eq(deploymentTargets.serverId, id));
+    }
 
-  await db.delete(certificateTargets).where(eq(certificateTargets.serverId, id));
-  await db.delete(servers).where(eq(servers.id, id));
+    await tx.delete(certificateTargets).where(eq(certificateTargets.serverId, id));
+    await tx.delete(servers).where(eq(servers.id, id));
+    return true;
+  });
+
+  if (!deleted) return NextResponse.json({ error: { code: "NOT_FOUND", message: "server not found" } }, { status: 404 });
   await recordAudit(request, "server.deleted", "server", id);
   return new NextResponse(null, { status: 204 });
 }
