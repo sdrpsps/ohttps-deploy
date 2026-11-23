@@ -5,6 +5,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { certificateTargets, certificates, certificateVersions, deployments, deploymentCertificates, deploymentTargets, logs, servers } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
+import { notifyWorkerWake } from "@/lib/worker-signal";
 
 export const runtime = "nodejs";
 
@@ -240,6 +241,7 @@ export async function POST(request: Request) {
   );
 
   await recordAudit(request, "deployment.created", "deployment", id);
+  void notifyWorkerWake("deployment-created");
   return NextResponse.json({
     data: {
       id,
@@ -258,13 +260,16 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: { code: "INVALID_STATUS", message: "can only bulk delete failed or cancelled deployments" } }, { status: 400 });
   }
 
-  const rows = await db.select({ id: deployments.id }).from(deployments).where(eq(deployments.status, status));
-  const ids = rows.map((r) => r.id);
-  if (ids.length > 0) {
-    await db.delete(logs).where(inArray(logs.deploymentId, ids));
-    await db.delete(deploymentTargets).where(inArray(deploymentTargets.deploymentId, ids));
-    await db.delete(deploymentCertificates).where(inArray(deploymentCertificates.deploymentId, ids));
-    await db.delete(deployments).where(inArray(deployments.id, ids));
-  }
-  return NextResponse.json({ data: { deletedCount: ids.length } });
+  const deletedCount = await db.transaction(async (tx) => {
+    const rows = await tx.select({ id: deployments.id }).from(deployments).where(eq(deployments.status, status));
+    const ids = rows.map((r) => r.id);
+    if (ids.length > 0) {
+      await tx.delete(logs).where(inArray(logs.deploymentId, ids));
+      await tx.delete(deploymentTargets).where(inArray(deploymentTargets.deploymentId, ids));
+      await tx.delete(deploymentCertificates).where(inArray(deploymentCertificates.deploymentId, ids));
+      await tx.delete(deployments).where(inArray(deployments.id, ids));
+    }
+    return ids.length;
+  });
+  return NextResponse.json({ data: { deletedCount } });
 }

@@ -22,7 +22,8 @@ export async function recoverInterruptedTasks() {
  * Missing/failed targets retry at most hourly; successes and explicit cancellations
  * for this version are preserved. A new version or newly enabled target is eligible.
  */
-export async function reconcileAutoDeployments(now = new Date(), source?: { certificateId: string; syncJobId: string }) {
+export async function reconcileAutoDeployments(now = new Date(), source?: { certificateId: string; syncJobId: string }): Promise<string[]> {
+  const createdIds: string[] = [];
   await db.transaction(async (tx) => {
     const desired = await tx.select({ certificateId: certificates.id, versionId: certificateVersions.id, serverId: servers.id })
       .from(certificates).innerJoin(certificateVersions, eq(certificates.currentVersionId, certificateVersions.id))
@@ -52,6 +53,8 @@ export async function reconcileAutoDeployments(now = new Date(), source?: { cert
       await tx.insert(deployments).values({ id, certificateId, certificateVersionId: group.versionId, syncJobId: source?.certificateId === certificateId ? source.syncJobId : undefined, trigger: "scheduled", createdAt: now, updatedAt: now });
       await tx.insert(deploymentCertificates).values({ id: randomUUID(), deploymentId: id, certificateId, certificateVersionId: group.versionId });
       await tx.insert(deploymentTargets).values(group.serverIds.map((serverId) => ({ id: randomUUID(), deploymentId: id, serverId })));
+      createdIds.push(id);
     }
   });
+  return createdIds;
 }

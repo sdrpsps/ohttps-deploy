@@ -11,6 +11,7 @@ import { notifyCertificateRecovery, notifySyncRecovery, queueNotification } from
 import { enqueueSyncJob } from "./sync-jobs";
 import { reserveOhttpsCall } from "./daily-limit";
 import { reconcileAutoDeployments } from "./automation";
+import { notifyWorkerWake } from "../lib/worker-signal";
 
 const logger = createLogger("worker");
 
@@ -37,18 +38,27 @@ export async function scanCertificates() {
   }
 }
 
-export async function processSyncQueue(assertLease: () => void) {
+export async function selectEligibleQueuedSyncJobs(limit = 10) {
   const cutoff = workerAdapters.now() - workerContext.runtimeSettings.ohttpsMinIntervalSeconds * 1000;
-  const queued = await db.select({ id: certificateSyncJobs.id }).from(certificateSyncJobs)
+  return db.select({ id: certificateSyncJobs.id, certificateId: certificateSyncJobs.certificateId }).from(certificateSyncJobs)
     .where(and(eq(certificateSyncJobs.status, "queued"), or(eq(certificateSyncJobs.force, true), sql`NOT EXISTS (
       SELECT 1 FROM settings WHERE key = 'ohttps_last_attempt_' || ${certificateSyncJobs.certificateId}
       AND CAST(value AS INTEGER) > ${cutoff}
     )`)))
-    .orderBy(certificateSyncJobs.createdAt).limit(10);
+    .orderBy(certificateSyncJobs.createdAt).limit(limit);
+}
+
+export async function processSyncQueue(assertLease: () => void) {
+  const queued = await selectEligibleQueuedSyncJobs(10);
   for (const job of queued) { assertLease(); await processSyncJob(job.id); }
 }
 
-export async function processSyncJob(jobId: string) {
+export interface ProcessSyncJobOptions {
+  signal?: AbortSignal;
+  onDeploymentQueued?: () => void;
+}
+
+export async function processSyncJob(jobId: string, options?: ProcessSyncJobOptions) {
   const [job] = await db.update(certificateSyncJobs).set({ status: "running", startedAt: new Date(workerAdapters.now()), updatedAt: new Date(workerAdapters.now()) })
     .where(and(eq(certificateSyncJobs.id, jobId), eq(certificateSyncJobs.status, "queued"))).returning();
   if (!job) return;
@@ -65,6 +75,8 @@ export async function processSyncJob(jobId: string) {
     return finishSyncJob(jobId, "cancelled", "certificate is unavailable or disabled");
   }
   try {
+    const signals = [options?.signal, workerContext.leaseSignal].filter(Boolean) as AbortSignal[];
+    const executionSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
     const current = await workerAdapters.certificateStore.getCurrent(certificate.id);
     if (!workerContext.runtimeSettings.ohttpsApiId || !workerContext.runtimeSettings.ohttpsApiKey) throw new Error("ohttps credentials are not configured");
     await progress("quota", "正在检查本次 ohttps 调用额度");
@@ -73,8 +85,8 @@ export async function processSyncJob(jobId: string) {
     const attemptedAt = new Date(workerAdapters.now());
     await db.insert(settings).values({ key: `ohttps_last_attempt_${certificate.id}`, value: String(attemptedAt.getTime()) })
       .onConflictDoUpdate({ target: settings.key, set: { value: String(attemptedAt.getTime()), updatedAt: attemptedAt } });
-    const payload = await workerAdapters.ohttpsClient(workerContext.runtimeSettings.ohttpsApiId, workerContext.runtimeSettings.ohttpsApiKey).getCertificate(certificate.ohttpsCertificateId, { signal: workerContext.leaseSignal });
-    if (workerContext.leaseSignal?.aborted) throw new Error("worker lease lost or stopping");
+    const payload = await workerAdapters.ohttpsClient(workerContext.runtimeSettings.ohttpsApiId, workerContext.runtimeSettings.ohttpsApiKey).getCertificate(certificate.ohttpsCertificateId, { signal: executionSignal });
+    if (executionSignal?.aborted) throw new Error("worker lease lost or stopping");
     await progress("validating", `正在校验证书、私钥与域名匹配: ${certificate.domain}`);
     const parsed = validateCertificatePair(payload.fullChainCerts, payload.certKey, { requiredSans: [certificate.domain], now: new Date(workerAdapters.now()) });
     const now = new Date(workerAdapters.now());
@@ -96,7 +108,11 @@ export async function processSyncJob(jobId: string) {
       await tx.update(certificates).set({ currentVersionId: versionId, expiresAt: stored.notAfter, lastCheckedAt: now, lastSyncAt: now, updatedAt: now }).where(eq(certificates.id, certificate.id));
     });
     await progress("deploying", "新版本已保存，正在按部署策略创建部署任务");
-    await reconcileAutoDeployments(new Date(workerAdapters.now()), { certificateId: certificate.id, syncJobId: jobId });
+    const createdDeploymentIds = await reconcileAutoDeployments(new Date(workerAdapters.now()), { certificateId: certificate.id, syncJobId: jobId });
+    if (createdDeploymentIds.length > 0) {
+      options?.onDeploymentQueued?.();
+      void notifyWorkerWake("sync-reconciled");
+    }
     await queueNotification("certificate.synced", "certificate", certificate.id, "success", undefined, `sync:${jobId}`);
     await progress("succeeded", "同步完成；如有已勾选的部署服务器，将在部署任务中继续执行");
     await finishSyncJob(jobId, "succeeded");

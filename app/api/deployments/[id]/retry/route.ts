@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { deployments, deploymentTargets } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
+import { notifyWorkerWake } from "@/lib/worker-signal";
 export const runtime = "nodejs";
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -14,5 +15,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const targets = await db.select({ serverId: deploymentTargets.serverId }).from(deploymentTargets).where(eq(deploymentTargets.deploymentId, id));
   if (targets.length) await db.insert(deploymentTargets).values(targets.map((target: { serverId: string }) => ({ id: randomUUID(), deploymentId: retryId, serverId: target.serverId })));
   await recordAudit(request, "deployment.retried", "deployment", retryId);
+  void notifyWorkerWake("deployment-retried");
   return NextResponse.json({ data: { id: retryId, status: "queued" } }, { status: 202 });
 }

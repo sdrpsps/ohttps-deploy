@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, readFile, readlink, rename, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { chmod, mkdir, readdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { validateCertificatePair, ParsedCertificate } from './certificate';
 
 export interface CertificateMaterial {
@@ -81,6 +81,69 @@ export class CertificateStore {
         fetchedAt: metadata.fetchedAt ? new Date(metadata.fetchedAt) : new Date(0),
       };
     } catch { return undefined; }
+  }
+
+  async pruneOldVersions(
+    certificateId: string,
+    options?: { keepCount?: number; protectedDirectories?: Iterable<string> }
+  ): Promise<string[]> {
+    const keepCount = Math.max(1, options?.keepCount ?? 5);
+    const certDir = this.certDir(certificateId);
+    let entries;
+    try {
+      entries = await readdir(certDir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+
+    const currentTarget = await readlink(join(certDir, 'current')).catch(() => undefined);
+    const protectedSet = new Set<string>();
+    if (currentTarget) {
+      protectedSet.add(currentTarget);
+      protectedSet.add(join(certDir, currentTarget));
+    }
+    for (const protectedPath of options?.protectedDirectories ?? []) {
+      if (!protectedPath) continue;
+      protectedSet.add(protectedPath);
+      protectedSet.add(basename(protectedPath));
+    }
+
+    const versionDirs = entries
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'current')
+      .map((entry) => entry.name);
+
+    const withTimes = await Promise.all(
+      versionDirs.map(async (name) => {
+        const fullPath = join(certDir, name);
+        let timestamp = 0;
+        try {
+          const raw = await readFile(join(fullPath, 'metadata.json'), 'utf8');
+          const parsed = JSON.parse(raw) as { fetchedAt?: string };
+          if (parsed.fetchedAt) {
+            const t = Date.parse(parsed.fetchedAt);
+            if (Number.isFinite(t)) timestamp = t;
+          }
+        } catch {
+          // Fall back to directory mtime when metadata is unavailable.
+        }
+        if (!timestamp) {
+          timestamp = await stat(fullPath).then((s) => s.mtimeMs).catch(() => 0);
+        }
+        return { name, fullPath, timestamp };
+      })
+    );
+
+    withTimes.sort((a, b) => (b.timestamp !== a.timestamp ? b.timestamp - a.timestamp : b.name.localeCompare(a.name)));
+
+    const removed: string[] = [];
+    for (let i = 0; i < withTimes.length; i++) {
+      const candidate = withTimes[i];
+      if (i < keepCount) continue;
+      if (protectedSet.has(candidate.name) || protectedSet.has(candidate.fullPath)) continue;
+      await rm(candidate.fullPath, { recursive: true, force: true });
+      removed.push(candidate.fullPath);
+    }
+    return removed;
   }
 
   store(certificateId: string, material: CertificateMaterial) {

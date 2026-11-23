@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { client } from "@/db";
+import { notifyWorkerWake } from "@/lib/worker-signal";
 
 export async function enqueueSyncJob(certificateId: string, trigger: "manual" | "scheduled", force = false) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -15,6 +16,7 @@ export async function enqueueSyncJob(certificateId: string, trigger: "manual" | 
     });
     if (inserted.rowsAffected > 0) {
       await client.execute({ sql: "INSERT INTO logs (id, sync_job_id, sequence, level, message) VALUES (?, ?, 0, 'info', '同步任务已创建，等待 Worker 接手')", args: [randomUUID(), id] });
+      void notifyWorkerWake("sync-job");
       return { id, created: true };
     }
 

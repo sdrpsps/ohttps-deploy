@@ -27,6 +27,11 @@ services:
     env_file: .env
     volumes:
       - ${OHTTPS_DATA_DIR:-./data}:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http=require('http');const req=http.get({socketPath:'/app/data/worker-control.sock',path:'/health'},(res)=>process.exit(res.statusCode===200?0:1));req.on('error',()=>process.exit(1));req.setTimeout(3000,()=>{req.destroy();process.exit(1);});"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 networks:
   default:

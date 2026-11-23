@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { deployments, deploymentTargets } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
+import { notifyWorkerCancel } from "@/lib/worker-signal";
 export const runtime = "nodejs";
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -10,5 +11,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!row) return NextResponse.json({ error: { code: "NOT_FOUND", message: "deployment not found" } }, { status: 404 });
   await db.update(deploymentTargets).set({ status: "cancelled", finishedAt: new Date(), updatedAt: new Date() }).where(and(inArray(deploymentTargets.deploymentId, [id]), inArray(deploymentTargets.status, ["queued", "running"])));
   await recordAudit(request, "deployment.cancelled", "deployment", id);
+  void notifyWorkerCancel(id);
   return NextResponse.json({ data: { id, status: "cancelled" } });
 }

@@ -8,9 +8,49 @@ import { workerAdapters, workerContext } from "./context";
 import { watchCancellation } from "./cancellation";
 import { queueNotification } from "./notifications";
 
-export async function processDeployment(deploymentId: string) {
+const activeDeploymentAbortControllers = new Map<string, AbortController>();
+const serverMutexTail = new Map<string, Promise<void>>();
+
+async function withServerMutex<T>(serverId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = serverMutexTail.get(serverId) ?? Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.then(
+    () => next,
+    () => next
+  );
+  serverMutexTail.set(serverId, chained);
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (serverMutexTail.get(serverId) === chained) {
+      serverMutexTail.delete(serverId);
+    }
+  }
+}
+
+export function cancelRunningDeployment(deploymentId: string): boolean {
+  const controller = activeDeploymentAbortControllers.get(deploymentId);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
+
+export interface ProcessDeploymentOptions {
+  signal?: AbortSignal;
+  serverLocksHeld?: boolean;
+}
+
+export async function processDeployment(deploymentId: string, options?: ProcessDeploymentOptions) {
   const [deployment] = await db.update(deployments).set({ status: "running", startedAt: new Date(workerAdapters.now()), updatedAt: new Date(workerAdapters.now()) }).where(and(eq(deployments.id, deploymentId), eq(deployments.status, "queued"))).returning();
   if (!deployment) return;
+
+  const localAbortController = new AbortController();
+  activeDeploymentAbortControllers.set(deploymentId, localAbortController);
 
   // 1. 获取本次部署包含的所有证书
   let deploymentCerts = await db.select({
@@ -37,6 +77,7 @@ export async function processDeployment(deploymentId: string) {
   }
 
   if (!deploymentCerts.length) {
+    activeDeploymentAbortControllers.delete(deploymentId);
     await failDeployment(deploymentId, "no valid certificates found for deployment");
     return;
   }
@@ -63,12 +104,14 @@ export async function processDeployment(deploymentId: string) {
     .where(eq(deploymentTargets.deploymentId, deploymentId));
 
   if (!targets.length) {
+    activeDeploymentAbortControllers.delete(deploymentId);
     await failDeployment(deploymentId, "no deployment targets configured");
     return;
   }
 
   const [sharedKey] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, "shared_ssh_private_key")).limit(1);
   if (!sharedKey && !deployment.dryRun) {
+    activeDeploymentAbortControllers.delete(deploymentId);
     await failDeployment(deploymentId, "shared SSH private key is not configured");
     return;
   }
@@ -111,81 +154,112 @@ export async function processDeployment(deploymentId: string) {
   const results: Array<{ ok: boolean; error?: string; exitCode?: number }> = targets.filter((t) => t.status === "succeeded").map(() => ({ ok: true }));
   const pendingTargets = targets.filter((t) => t.status !== "succeeded" && t.status !== "cancelled");
   const concurrency = Math.max(1, Math.min(deployment.concurrency, targets.length || 1));
-  const cancellation = watchCancellation(async () => (await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1))[0]?.status === "cancelled");
+  const cancellation = watchCancellation(
+    async () => (await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1))[0]?.status === "cancelled",
+    2_000
+  );
+
+  const signalList = [cancellation.signal, localAbortController.signal, options?.signal, workerContext.leaseSignal].filter(Boolean) as AbortSignal[];
+  const combinedSignal = signalList.length > 1 ? AbortSignal.any(signalList) : signalList[0];
+  const isExplicitCancel = () =>
+    cancellation.signal.aborted ||
+    localAbortController.signal.aborted ||
+    Boolean(options?.signal?.aborted && !workerContext.leaseSignal?.aborted);
 
   try {
     await cancellation.check();
     for (let offset = 0; offset < pendingTargets.length; offset += concurrency) {
       const batch = pendingTargets.slice(offset, offset + concurrency);
       const batchResults = await Promise.all(batch.map(async (target) => {
-        if (cancellation.signal.aborted || workerContext.leaseSignal?.aborted) return { ok: false, error: "cancelled" };
-        await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(workerAdapters.now()), updatedAt: new Date(workerAdapters.now()) }).where(eq(deploymentTargets.id, target.id));
+        const executeTarget = async () => {
+          if (combinedSignal?.aborted) return { ok: false, error: "cancelled" };
+          await db.update(deploymentTargets).set({ status: "running", startedAt: new Date(workerAdapters.now()), updatedAt: new Date(workerAdapters.now()) }).where(eq(deploymentTargets.id, target.id));
 
-        // 筛选归属当前服务器的待部署证书
-        const assignedCertIds = serverToCertIds.get(target.serverId);
-        const serverCerts = deploymentCerts.filter((c) => assignedCertIds ? assignedCertIds.has(c.certificateId) : true);
-        const certsToDeploy = deployment.trigger === "scheduled"
-          ? deploymentCerts.filter((c) => target.enabled && assignedCertIds?.has(c.certificateId) && c.certificateStatus === "active" && c.currentVersionId === c.versionId)
-          : serverCerts.length > 0 ? serverCerts : deploymentCerts;
-        if (!certsToDeploy.length) {
-          await db.update(deploymentTargets).set({ status: "failed", errorSummary: "automatic deployment policy no longer applies", finishedAt: new Date(workerAdapters.now()), updatedAt: new Date(workerAdapters.now()) }).where(eq(deploymentTargets.id, target.id));
-          return { ok: false, error: "automatic deployment policy no longer applies" };
-        }
+          // 筛选归属当前服务器的待部署证书
+          const assignedCertIds = serverToCertIds.get(target.serverId);
+          const serverCerts = deploymentCerts.filter((c) => assignedCertIds ? assignedCertIds.has(c.certificateId) : true);
+          const certsToDeploy = deployment.trigger === "scheduled"
+            ? deploymentCerts.filter((c) => target.enabled && assignedCertIds?.has(c.certificateId) && c.certificateStatus === "active" && c.currentVersionId === c.versionId)
+            : serverCerts.length > 0 ? serverCerts : deploymentCerts;
+          if (!certsToDeploy.length) {
+            await db.update(deploymentTargets).set({ status: "failed", errorSummary: "automatic deployment policy no longer applies", finishedAt: new Date(workerAdapters.now()), updatedAt: new Date(workerAdapters.now()) }).where(eq(deploymentTargets.id, target.id));
+            return { ok: false, error: "automatic deployment policy no longer applies" };
+          }
 
-        const materials = certsToDeploy.map((c) => {
-          const paths = deploymentPaths(c.domain);
-          return {
-            domain: c.domain,
-            certificatePath: c.certPath,
-            privateKeyPath: c.privateKeyPath,
-            certPath: paths.certPath,
-            privateKeyPathRemote: paths.privateKeyPath,
-          };
-        });
+          const materials = certsToDeploy.map((c) => {
+            const paths = deploymentPaths(c.domain);
+            return {
+              domain: c.domain,
+              certificatePath: c.certPath,
+              privateKeyPath: c.privateKeyPath,
+              certPath: paths.certPath,
+              privateKeyPathRemote: paths.privateKeyPath,
+            };
+          });
 
-        const certNames = certsToDeploy.map((c) => c.domain).join(", ");
-        await logProgress(`[${target.name}] 开始部署证书 (${certNames}) 至服务器节点...`, target.id);
+          const certNames = certsToDeploy.map((c) => c.domain).join(", ");
+          await logProgress(`[${target.name}] 开始部署证书 (${certNames}) 至服务器节点...`, target.id);
 
-        // 单次 SSH 连接，合并分发全部证书并统一 reload
-        let result;
-        try {
-          result = await workerAdapters.deployer(sharedKey?.value ?? "").deploy(
-            target,
-            materials,
-            {
-              dryRun: deployment.dryRun,
-              signal: workerContext.leaseSignal ? AbortSignal.any([cancellation.signal, workerContext.leaseSignal]) : cancellation.signal,
-              onProgress: async (_phase, msg, level) => {
-                await logProgress(`[${target.name}] ${msg}`, target.id, level ?? "info");
-              },
-            }
+          // 单次 SSH 连接，合并分发全部证书并统一 reload
+          let result;
+          try {
+            result = await workerAdapters.deployer(sharedKey?.value ?? "").deploy(
+              target,
+              materials,
+              {
+                dryRun: deployment.dryRun,
+                signal: combinedSignal,
+                onProgress: async (_phase, msg, level) => {
+                  await logProgress(`[${target.name}] ${msg}`, target.id, level ?? "info");
+                },
+              }
+            );
+          } catch (error) {
+            result = {
+              targetId: target.id,
+              ok: false,
+              error: isExplicitCancel() ? "cancelled" : redactSensitive(String(error), sharedKey?.value),
+            };
+          }
+
+          const cancelled = !result.ok && isExplicitCancel();
+          await db.update(deploymentTargets).set({
+            status: result.ok ? "succeeded" : cancelled ? "cancelled" : "failed",
+            exitCode: result.exitCode ?? null,
+            errorSummary: result.error ?? (cancelled ? "cancelled" : null),
+            finishedAt: new Date(workerAdapters.now()),
+            updatedAt: new Date(workerAdapters.now()),
+          }).where(and(eq(deploymentTargets.id, target.id), eq(deploymentTargets.status, "running")));
+
+          await logProgress(
+            result.ok
+              ? `[${target.name}] ${deployment.dryRun ? "dry-run 模拟校验成功" : `已成功部署 ${certsToDeploy.length} 张证书 (${certNames})`}`
+              : cancelled
+                ? `[${target.name}] 部署已取消`
+                : `[${target.name}] 部署失败：${result.error ?? "未知错误"}`,
+            target.id,
+            result.ok ? "info" : cancelled ? "warn" : "error"
           );
-        } catch (error) {
-          result = { targetId: target.id, ok: false, error: redactSensitive(String(error), sharedKey?.value) };
-        }
-        await db.update(deploymentTargets).set({
-          status: result.ok ? "succeeded" : result.error === "cancelled" && cancellation.signal.aborted ? "cancelled" : "failed",
-          exitCode: result.exitCode ?? null,
-          errorSummary: result.error ?? null,
-          finishedAt: new Date(workerAdapters.now()),
-          updatedAt: new Date(workerAdapters.now()),
-        }).where(and(eq(deploymentTargets.id, target.id), eq(deploymentTargets.status, "running")));
+          return result;
+        };
 
-        await logProgress(
-          result.ok
-            ? `[${target.name}] ${deployment.dryRun ? "dry-run 模拟校验成功" : `已成功部署 ${certsToDeploy.length} 张证书 (${certNames})`}`
-            : `[${target.name}] 部署失败：${result.error ?? "未知错误"}`,
-          target.id,
-          result.ok ? "info" : "error"
-        );
-        return result;
+        return options?.serverLocksHeld
+          ? executeTarget()
+          : withServerMutex(target.serverId, executeTarget);
       }));
       results.push(...batchResults);
     }
-  } finally { cancellation.stop(); }
+  } finally {
+    cancellation.stop();
+    activeDeploymentAbortControllers.delete(deploymentId);
+  }
 
   const [latestState] = await db.select({ status: deployments.status }).from(deployments).where(eq(deployments.id, deploymentId)).limit(1);
   if (latestState?.status === "cancelled") return;
+  if (isExplicitCancel()) {
+    await db.update(deployments).set({ status: "cancelled", finishedAt: new Date(workerAdapters.now()), updatedAt: new Date(workerAdapters.now()) }).where(and(eq(deployments.id, deploymentId), eq(deployments.status, "running")));
+    return;
+  }
   const failed = results.filter((result) => !result.ok).length;
   const status = failed === 0 ? "succeeded" : failed === results.length || deployment.failurePolicy === "all_success" ? "failed" : "partial";
   if (targets.length > 1) {
@@ -205,4 +279,3 @@ export async function failDeployment(id: string, message: string) {
   await db.insert(logs).values({ id: randomUUID(), deploymentId: id, sequence, level: "error", message });
   await queueNotification("deployment.failed", "deployment", id, "failure", message);
 }
-
