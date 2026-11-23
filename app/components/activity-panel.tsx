@@ -104,6 +104,10 @@ export function ActivityPanel({
     queryKey: queryKeys.deployment(selectedId ?? ""),
     queryFn: () => getApiData<DeploymentDetail>(`/api/deployments/${selectedId}`),
     enabled: Boolean(selectedId),
+    refetchInterval: (current) => {
+      const detail = current.state.data as DeploymentDetail | undefined;
+      return detail && !terminalStatuses.has(detail.status) ? 2_000 : false;
+    },
   });
 
   const deployments = deploymentsQuery.data ?? [];
@@ -188,39 +192,92 @@ export function ActivityPanel({
     }
   }
 
+  const selectedIdForStream = selected?.id ?? null;
+  const isSelectedTerminal = selected ? terminalStatuses.has(selected.status) : false;
+
   // SSE 实时日志流连接
   useEffect(() => {
-    if (!selected || terminalStatuses.has(selected.status)) return;
-    const source = new EventSource(`/api/deployments/${selected.id}/events`);
+    if (!selectedIdForStream || isSelectedTerminal) return;
+    const cached = queryClient.getQueryData<DeploymentDetail>(
+      queryKeys.deployment(selectedIdForStream)
+    );
+    const lastSequence =
+      cached?.logs.reduce((max, item) => Math.max(max, item.sequence || 0), 0) ?? 0;
+    const streamUrl =
+      lastSequence > 0
+        ? `/api/deployments/${selectedIdForStream}/events?after=${lastSequence}`
+        : `/api/deployments/${selectedIdForStream}/events`;
+    const source = new EventSource(streamUrl);
     source.onmessage = (event) => {
       const entry = JSON.parse(event.data) as LogEntry;
+      let targetChanged = false;
       queryClient.setQueryData<DeploymentDetail>(
-        queryKeys.deployment(selected.id),
+        queryKeys.deployment(selectedIdForStream),
         (current) => {
-          if (!current || current.id !== selected.id) return current;
+          if (!current || current.id !== selectedIdForStream) return current;
           const exists = current.logs.some(
             (item) =>
               (entry.id && item.id === entry.id) ||
               (entry.sequence && item.sequence === entry.sequence)
           );
           if (exists) return current;
+
+          const updatedTargets = entry.targetId
+            ? current.targets.map((target) => {
+                if (target.id !== entry.targetId) return target;
+                const isFailureLog =
+                  entry.level === "error" && entry.message.includes("部署失败：");
+                const isCancelledLog = entry.message.includes("部署已取消");
+                const isSucceededLog =
+                  entry.message.includes("已成功部署") ||
+                  entry.message.includes("dry-run 模拟校验成功");
+
+                if (isFailureLog) {
+                  targetChanged = true;
+                  const errorSummary =
+                    entry.message.split("部署失败：")[1]?.trim() || target.errorSummary;
+                  return { ...target, status: "failed", errorSummary };
+                }
+                if (isCancelledLog) {
+                  targetChanged = true;
+                  return { ...target, status: "cancelled" };
+                }
+                if (isSucceededLog) {
+                  targetChanged = true;
+                  return { ...target, status: "succeeded", exitCode: target.exitCode ?? 0 };
+                }
+                if (target.status === "queued") {
+                  targetChanged = true;
+                  return { ...target, status: "running" };
+                }
+                return target;
+              })
+            : current.targets;
+
           return {
             ...current,
             status: current.status === "queued" ? "running" : current.status,
+            targets: updatedTargets,
             logs: [...current.logs, entry],
           };
         }
       );
+
+      if (targetChanged) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.deployment(selectedIdForStream),
+        });
+      }
     };
     source.addEventListener("end", () => {
       source.close();
       void Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.deployment(selected.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.deployment(selectedIdForStream) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.deployments }),
       ]);
     });
     return () => source.close();
-  }, [selected?.id, selected?.status, queryClient]);
+  }, [selectedIdForStream, isSelectedTerminal, queryClient]);
 
   if (initialLoading) return <DashboardSkeleton section="activity" />;
 

@@ -21,6 +21,8 @@ export function SyncTaskSheet({ taskId, onOpenChange }: { taskId: string | null;
   const logsQuery = useQuery({ queryKey: queryKeys.syncJobLogs(taskId ?? ""), queryFn: () => getApiData<SyncLog[]>(`/api/certificate-sync-jobs/${taskId}/logs`), enabled: Boolean(taskId) });
   const task = taskQuery.data;
   const logs = logsQuery.data ?? [];
+  const hasTask = Boolean(task);
+  const isTerminal = terminalStatuses.has(task?.status ?? "");
 
   useEffect(() => {
     if (logs.length > 0 && logEndRef.current) {
@@ -29,8 +31,14 @@ export function SyncTaskSheet({ taskId, onOpenChange }: { taskId: string | null;
   }, [logs.length]);
 
   useEffect(() => {
-    if (!taskId || !task || terminalStatuses.has(task.status)) return;
-    const source = new EventSource(`/api/certificate-sync-jobs/${taskId}/events`);
+    if (!taskId || !hasTask || isTerminal) return;
+    const cachedLogs = queryClient.getQueryData<SyncLog[]>(queryKeys.syncJobLogs(taskId)) ?? [];
+    const lastSequence = cachedLogs.reduce((max, item) => Math.max(max, item.sequence || 0), 0);
+    const streamUrl =
+      lastSequence > 0
+        ? `/api/certificate-sync-jobs/${taskId}/events?after=${lastSequence}`
+        : `/api/certificate-sync-jobs/${taskId}/events`;
+    const source = new EventSource(streamUrl);
     source.onmessage = (event) => {
       const entry = JSON.parse(event.data) as SyncLog;
       queryClient.setQueryData<SyncLog[]>(queryKeys.syncJobLogs(taskId), (current = []) =>
@@ -52,7 +60,7 @@ export function SyncTaskSheet({ taskId, onOpenChange }: { taskId: string | null;
       ]);
     });
     return () => source.close();
-  }, [taskId, task?.status, queryClient]);
+  }, [taskId, hasTask, isTerminal, queryClient]);
 
   useEffect(() => {
     if (task && terminalStatuses.has(task.status)) {
@@ -63,8 +71,6 @@ export function SyncTaskSheet({ taskId, onOpenChange }: { taskId: string | null;
       ]);
     }
   }, [task?.status, queryClient]);
-
-  const isTerminal = terminalStatuses.has(task?.status ?? "");
 
   return (
     <Sheet open={Boolean(taskId)} onOpenChange={onOpenChange}>
