@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { SSHDeployer } from "../app/deployer";
+import { SSHDeployer, validateCommand } from "../app/deployer";
+import { fingerprintErrorMessage, normalizeFingerprint } from "../app/deployer/ssh-deployer";
+import { POST as fetchFingerprint } from "../app/api/servers/fingerprint/route";
 
 type Mode = "config-failure" | "timeout" | "upload-timeout";
 
 async function run() {
+  // 1. Deployer rollback, timeouts, and multi-cert batched backupCommand
   const configFailure = await deployWith("config-failure");
   assert.equal(configFailure.result.ok, false);
   assert.match(configFailure.result.error ?? "", /previous certificate restored/);
@@ -26,6 +29,10 @@ async function run() {
   assert.equal(multiDeploy.result.ok, true);
   assert.ok(multiDeploy.commands.some((cmd) => cmd.includes("fullchain-1.pem")));
   assert.ok(multiDeploy.commands.some((cmd) => cmd.includes("sudo -n nginx -s reload")));
+  const backupExecs = multiDeploy.commands.filter((cmd) => cmd.includes("previous-fullchain"));
+  assert.equal(backupExecs.length, 1, "All backupCommand invocations should be batched into one exec call");
+  assert.ok(backupExecs[0].includes("previous-fullchain.pem"));
+  assert.ok(backupExecs[0].includes("previous-fullchain-1.pem"));
   assert.deepEqual(multiDeploy.progressPhases, [
     "connecting",
     "connected",
@@ -40,6 +47,44 @@ async function run() {
     "reloading",
     "reloaded",
   ]);
+
+  // 2. Command validation & host fingerprint normalization / lookup
+  assert.doesNotThrow(() => validateCommand("nginx -t"));
+  assert.throws(() => validateCommand("nginx -s reload; rm -rf /"), /metacharacters/);
+  assert.equal(normalizeFingerprint("SHA256:MsB48clb9+ArTrw8In3WYXa2nA6NrouWVH7TC4dTxFU"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
+  assert.equal(normalizeFingerprint("256 SHA256:MsB48clb9+ArTrw8In3WYXa2nA6NrouWVH7TC4dTxFU host (ED25519)"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
+  assert.equal(normalizeFingerprint("MsB48clb9+ArTrw8In3WYXa2nA6NrouWVH7TC4dTxFU"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
+  assert.equal(normalizeFingerprint("32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455"), "32c078f1c95bf7e02b4ebc3c227dd66176b69c0e8dae8b96547ed30b8753c455");
+  assert.equal(normalizeFingerprint(""), "");
+
+  const fakeClient = {
+    once(_event: string, _listener: unknown) { return this; },
+    connect(config: { username?: string; hostVerifier?: (hash: string) => boolean }) {
+      assert.equal(config.username, "fingerprint");
+      config.hostVerifier?.("server-key-hash");
+    },
+    end() {},
+  };
+  const fingerprint = await new SSHDeployer({ privateKey: "", clientFactory: () => fakeClient as never }).getHostFingerprint({
+    host: "server.example.com",
+    port: 22,
+    timeoutSeconds: 1,
+  });
+  assert.equal(fingerprint, "SHA256:server-key-hash");
+
+  // 3. Fingerprint API input validation & error formatting
+  const fpRes = await fetchFingerprint(
+    new Request("http://localhost/api/servers/fingerprint", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ host: "server.example.com", port: 0 }),
+    })
+  );
+  assert.equal(fpRes.status, 400);
+  assert.equal((await fpRes.json()).error.code, "INVALID_INPUT");
+  assert.match(fingerprintErrorMessage(new Error("connect ECONNREFUSED 192.0.2.1:22")), /port refused/);
+  assert.match(fingerprintErrorMessage(new Error("getaddrinfo ENOTFOUND host")), /could not be resolved/);
+  assert.match(fingerprintErrorMessage(new Error("SSH host-key lookup timed out")), /timed out/);
 
   console.log("SSH deployer tests passed");
 }
