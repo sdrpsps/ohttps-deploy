@@ -73,11 +73,11 @@ export function CertificateFormDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
-            <ShieldCheck className="size-5 text-primary" />
-            <span>{certificate ? "编辑证书资产" : "添加证书资产"}</span>
+            <ShieldCheck className="size-4 text-primary" />
+            <span>{certificate ? "编辑证书" : "添加证书"}</span>
           </DialogTitle>
-          <DialogDescription className="text-xs">
-            {certificate ? "修改证书配置与自动部署目标服务器。" : "接入 ohttps 证书并绑定自动部署的目标服务器"}
+          <DialogDescription className="sr-only">
+            {certificate ? "修改证书配置与自动部署目标服务器" : "填写证书信息并选择目标服务器"}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

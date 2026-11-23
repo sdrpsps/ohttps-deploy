@@ -23,13 +23,12 @@ export function DashboardSkeleton({ section }: DashboardSkeletonProps) {
 function OverviewSkeleton() {
   return (
     <>
-      <Skeleton className="h-60 rounded-2xl bg-muted/70 sm:h-64" />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-36" />
+          <Skeleton key={index} className="h-28 rounded-xl" />
         ))}
       </div>
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-2">
         <ListCardSkeleton />
         <ListCardSkeleton />
       </div>
@@ -39,17 +38,13 @@ function OverviewSkeleton() {
 
 function AssetTableSkeleton() {
   return (
-    <div className="rounded-xl border bg-card p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-2">
-          <Skeleton className="h-6 w-40" />
-          <Skeleton className="h-4 w-72" />
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-7 w-52" />
         </div>
-        <Skeleton className="h-8 w-24" />
-      </div>
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-between">
-        <Skeleton className="h-8 w-full sm:w-72" />
-        <Skeleton className="h-7 w-56" />
+        <Skeleton className="h-8 w-28" />
       </div>
       <TableSkeleton />
     </div>
@@ -58,17 +53,13 @@ function AssetTableSkeleton() {
 
 function PolicySkeleton() {
   return (
-    <>
-      <div className="grid gap-4 sm:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-28" />)}
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex items-center justify-between gap-4">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-5 w-44" />
       </div>
-      <div className="rounded-xl border bg-card p-6">
-        <Skeleton className="h-6 w-48" />
-        <Skeleton className="mt-2 h-4 w-80" />
-        <Skeleton className="mt-6 h-8 w-full max-w-sm" />
-        <TableSkeleton />
-      </div>
-    </>
+      <TableSkeleton />
+    </div>
   );
 }
 
@@ -89,15 +80,11 @@ function ActivitySkeleton() {
 
 function NotificationSkeleton() {
   return (
-    <div className="rounded-xl border bg-card p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-2">
-          <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-4 w-96 max-w-full" />
-        </div>
-        <Skeleton className="h-8 w-24" />
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex items-center justify-between gap-4">
+        <Skeleton className="h-7 w-64" />
+        <Skeleton className="h-8 w-36" />
       </div>
-      <Skeleton className="mt-6 h-7 w-80 max-w-full" />
       <TableSkeleton />
     </div>
   );

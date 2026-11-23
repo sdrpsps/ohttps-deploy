@@ -3,26 +3,25 @@
 import { useMemo, useState } from "react";
 import {
   AlertCircle,
-  ArrowRight,
-  Ban,
-  Clock,
-  Filter,
-  RefreshCw,
-  RotateCcw,
   Search,
-  Server,
-  ShieldCheck,
   Trash2,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -44,35 +43,41 @@ import type { Deployment, SyncJobItem } from "./types";
 import {
   formatActivityDate,
   formatDuration,
+  formatTaskError,
   statusLabels,
-  terminalStatuses,
+  syncPhaseLabels,
   triggerLabels,
 } from "./types";
 
-type UnifiedTask = {
-  kind: "deployment" | "sync";
-  id: string;
-  title?: string | null;
-  certificateId?: string | null;
-  certificateName?: string | null;
-  domain?: string | null;
-  trigger: string;
-  status: string;
-  createdAt: string;
-  startedAt?: string | null;
-  finishedAt?: string | null;
-  errorSummary?: string | null;
-  serverIds?: string[];
-  phase?: string;
-  rawDeployment?: Deployment;
-  rawSyncJob?: SyncJobItem;
-};
+function matchesStatusFilter(itemStatus: string, filterStatus: string): boolean {
+  if (!filterStatus || filterStatus === "all") return true;
+  if (filterStatus === "failed") return itemStatus === "failed" || itemStatus === "partial";
+  if (filterStatus === "running") return itemStatus === "running" || itemStatus === "queued";
+  return itemStatus === filterStatus;
+}
 
-type TaskHistoryProps = {
+function matchesFromDate(createdAt: string, from: string): boolean {
+  if (!from) return true;
+  const fromDate = new Date(`${from}T00:00:00`);
+  return new Date(createdAt) >= fromDate;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const isFailed = status === "failed" || status === "partial";
+  return (
+    <Badge
+      variant={status === "succeeded" ? "default" : isFailed ? "destructive" : "secondary"}
+      className="text-[11px]"
+    >
+      {statusLabels[status] ?? status}
+    </Badge>
+  );
+}
+
+type DeploymentHistoryProps = {
   certificates: Certificate[];
   servers: ManagedServer[];
   deployments: Deployment[];
-  syncJobs: SyncJobItem[];
   certificateId: string;
   serverId: string;
   status: string;
@@ -82,16 +87,13 @@ type TaskHistoryProps = {
   onStatusChange: (status: string) => void;
   onFromChange: (value: string) => void;
   onOpenDeployment: (id: string) => void;
-  onOpenSyncJob: (id: string) => void;
-  onDeploymentAction: (id: string, action: "retry" | "cancel") => void;
   onClearFailed?: () => void;
 };
 
-export function TaskHistory({
+export function DeploymentHistory({
   certificates,
   servers,
   deployments,
-  syncJobs,
   certificateId,
   serverId,
   status,
@@ -101,101 +103,47 @@ export function TaskHistory({
   onStatusChange,
   onFromChange,
   onOpenDeployment,
-  onOpenSyncJob,
-  onDeploymentAction,
   onClearFailed,
-}: TaskHistoryProps) {
-  const [taskKind, setTaskKind] = useState<"all" | "deployment" | "sync">("all");
+}: DeploymentHistoryProps) {
   const [keyword, setKeyword] = useState("");
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   const serverMap = useMemo(
     () => new Map(servers.map((s) => [s.id, s.name])),
     [servers]
   );
 
-  // 统一聚合任务
-  const unifiedTasks: UnifiedTask[] = useMemo(() => {
-    const list: UnifiedTask[] = [];
+  const failedDeploymentCount = useMemo(
+    () => deployments.filter((d) => d.status === "failed" || d.status === "partial").length,
+    [deployments]
+  );
 
-    if (taskKind === "all" || taskKind === "deployment") {
-      for (const d of deployments) {
-        list.push({
-          kind: "deployment",
-          id: d.id,
-          title: d.title,
-          certificateId: d.certificateId,
-          certificateName: d.certificateName,
-          domain: d.domain,
-          trigger: d.trigger,
-          status: d.status,
-          createdAt: d.createdAt,
-          startedAt: d.startedAt,
-          finishedAt: d.finishedAt,
-          errorSummary: d.errorSummary,
-          serverIds: d.serverIds,
-          rawDeployment: d,
-        });
-      }
-    }
-
-    if (taskKind === "all" || taskKind === "sync") {
-      for (const s of syncJobs) {
-        list.push({
-          kind: "sync",
-          id: s.id,
-          certificateId: s.certificateId,
-          certificateName: s.certificateName,
-          trigger: s.trigger,
-          status: s.status,
-          phase: s.phase,
-          createdAt: s.createdAt,
-          startedAt: s.startedAt,
-          finishedAt: s.finishedAt,
-          errorSummary: s.errorSummary,
-          rawSyncJob: s,
-        });
-      }
-    }
-
-    // 按创建时间倒序
-    return list.sort(
+  const filteredDeployments = useMemo(() => {
+    const sorted = [...deployments].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [deployments, syncJobs, taskKind]);
+    const kw = keyword.trim().toLowerCase();
 
-  // 综合筛选
-  const filteredTasks = useMemo(() => {
-    return unifiedTasks.filter((item) => {
-      if (certificateId && item.certificateId !== certificateId) return false;
-      if (serverId) {
-        if (item.kind !== "deployment") return false;
-        if (!item.serverIds?.includes(serverId)) return false;
+    return sorted.filter((d) => {
+      if (certificateId) {
+        const matchesCertId =
+          d.certificateId === certificateId ||
+          d.certificates?.some((c) => c.id === certificateId);
+        if (!matchesCertId) return false;
       }
-      if (status && status !== "all") {
-        if (status === "failed") {
-          if (item.status !== "failed" && item.status !== "partial") return false;
-        } else if (status === "running") {
-          if (item.status !== "running" && item.status !== "queued") return false;
-        } else if (item.status !== status) {
-          return false;
-        }
-      }
-      if (from) {
-        const fromDate = new Date(`${from}T00:00:00`);
-        if (new Date(item.createdAt) < fromDate) return false;
-      }
-      if (keyword.trim()) {
-        const kw = keyword.toLowerCase();
-        const matchesTitle = item.title?.toLowerCase().includes(kw) ?? false;
-        const matchesName = item.certificateName?.toLowerCase().includes(kw) ?? false;
-        const matchesDomain = item.domain?.toLowerCase().includes(kw) ?? false;
-        const matchesErr = item.errorSummary?.toLowerCase().includes(kw) ?? false;
+      if (serverId && !d.serverIds?.includes(serverId)) return false;
+      if (!matchesStatusFilter(d.status, status)) return false;
+      if (!matchesFromDate(d.createdAt, from)) return false;
+
+      if (kw) {
+        const matchesTitle = d.title?.toLowerCase().includes(kw) ?? false;
+        const matchesName = d.certificateName?.toLowerCase().includes(kw) ?? false;
+        const matchesDomain = d.domain?.toLowerCase().includes(kw) ?? false;
+        const matchesErr = d.errorSummary?.toLowerCase().includes(kw) ?? false;
         const matchesServer =
-          item.serverIds?.some((sid) =>
-            serverMap.get(sid)?.toLowerCase().includes(kw)
-          ) ?? false;
+          d.serverIds?.some((sid) => serverMap.get(sid)?.toLowerCase().includes(kw)) ?? false;
         const matchesCerts =
-          item.rawDeployment?.certificates?.some(
+          d.certificates?.some(
             (c) => c.name.toLowerCase().includes(kw) || c.domain.toLowerCase().includes(kw)
           ) ?? false;
         if (!matchesTitle && !matchesName && !matchesDomain && !matchesErr && !matchesServer && !matchesCerts) {
@@ -204,364 +152,489 @@ export function TaskHistory({
       }
       return true;
     });
-  }, [unifiedTasks, certificateId, serverId, status, from, keyword, serverMap]);
+  }, [deployments, certificateId, serverId, status, from, keyword, serverMap]);
+
+  const hasActiveFilters = Boolean(keyword || certificateId || serverId || status || from);
+
+  const resetFilters = () => {
+    setKeyword("");
+    onCertificateChange("");
+    onServerChange("");
+    onStatusChange("");
+    onFromChange("");
+  };
 
   return (
-    <Card className="border-border/70 shadow-sm">
-      <CardHeader className="pb-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="text-base font-semibold">任务中心</CardTitle>
-            <CardDescription className="text-xs">
-              包含所有证书同步与服务器安全部署记录，支持精准过滤与一键重试。
-            </CardDescription>
+    <>
+      <Card>
+        <CardHeader className="space-y-3 border-b px-4 py-3.5">
+          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="grid flex-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="搜索任务/证书/节点/错误…"
+                  className="h-8 pl-8 text-xs"
+                  value={keyword}
+                  onChange={(e) => setKeyword(e.target.value)}
+                />
+              </div>
+
+              <Select
+                value={certificateId || "all"}
+                onValueChange={(val) => onCertificateChange(val === "all" ? "" : val)}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="按证书筛选" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">所有证书</SelectItem>
+                  {certificates.map((cert) => (
+                    <SelectItem key={cert.id} value={cert.id}>
+                      {cert.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={serverId || "all"}
+                onValueChange={(val) => onServerChange(val === "all" ? "" : val)}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="按服务器筛选" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">所有服务器</SelectItem>
+                  {servers.map((srv) => (
+                    <SelectItem key={srv.id} value={srv.id}>
+                      {srv.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select
+                value={status || "all"}
+                onValueChange={(val) => onStatusChange(val === "all" ? "" : val)}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="按状态筛选" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">所有状态</SelectItem>
+                  <SelectItem value="failed">仅看异常 / 失败</SelectItem>
+                  <SelectItem value="running">运行中 / 排队中</SelectItem>
+                  <SelectItem value="succeeded">成功</SelectItem>
+                  <SelectItem value="cancelled">已取消</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <Input
+                type="date"
+                className="h-8 text-xs"
+                value={from}
+                onChange={(e) => onFromChange(e.target.value)}
+                aria-label="起始日期"
+              />
+            </div>
+
+            {(hasActiveFilters || (onClearFailed && failedDeploymentCount > 0)) && (
+              <div className="flex shrink-0 items-center gap-2">
+                {hasActiveFilters && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={resetFilters}
+                  >
+                    <X className="size-3.5" />
+                    重置
+                  </Button>
+                )}
+                {onClearFailed && failedDeploymentCount > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-destructive"
+                    onClick={() => setConfirmClearOpen(true)}
+                  >
+                    <Trash2 className="size-3.5" />
+                    清空失败记录 ({failedDeploymentCount})
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
-          {/* 类型快捷切换 */}
-          <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/60 p-1 text-xs [&>button]:whitespace-nowrap">
-            <button
-              type="button"
-              className={`rounded-md px-3 py-1 font-medium transition-all ${
-                taskKind === "all"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setTaskKind("all")}
-            >
-              全部任务 ({deployments.length + syncJobs.length})
-            </button>
-            <button
-              type="button"
-              className={`rounded-md px-3 py-1 font-medium transition-all ${
-                taskKind === "deployment"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setTaskKind("deployment")}
-            >
-              部署记录 ({deployments.length})
-            </button>
-            <button
-              type="button"
-              className={`rounded-md px-3 py-1 font-medium transition-all ${
-                taskKind === "sync"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setTaskKind("sync")}
-            >
-              证书同步 ({syncJobs.length})
-            </button>
-          </div>
-        </div>
-      </CardHeader>
+        </CardHeader>
 
-      <CardContent className="space-y-4">
-        {/* 筛选过滤工具栏 */}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {/* 关键字模糊搜 */}
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              placeholder="搜索证书/域名/错误…"
-              className="pl-8 text-xs h-9"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-            />
-          </div>
-
-          {/* 证书筛选 */}
-          <Select
-            value={certificateId || "all"}
-            onValueChange={(val) => onCertificateChange(val === "all" ? "" : val)}
-          >
-            <SelectTrigger className="text-xs h-9">
-              <SelectValue placeholder="按证书筛选" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">所有证书</SelectItem>
-              {certificates.map((cert) => (
-                <SelectItem key={cert.id} value={cert.id}>
-                  {cert.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* 服务器筛选 */}
-          <Select
-            value={serverId || "all"}
-            onValueChange={(val) => onServerChange(val === "all" ? "" : val)}
-          >
-            <SelectTrigger className="text-xs h-9">
-              <SelectValue placeholder="按服务器筛选" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">所有服务器</SelectItem>
-              {servers.map((srv) => (
-                <SelectItem key={srv.id} value={srv.id}>
-                  {srv.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* 状态筛选 */}
-          <Select
-            value={status || "all"}
-            onValueChange={(val) => onStatusChange(val === "all" ? "" : val)}
-          >
-            <SelectTrigger className="text-xs h-9">
-              <SelectValue placeholder="按状态筛选" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">所有状态</SelectItem>
-              <SelectItem value="failed">仅看异常 / 失败</SelectItem>
-              <SelectItem value="running">运行中 / 排队中</SelectItem>
-              <SelectItem value="succeeded">成功</SelectItem>
-              <SelectItem value="cancelled">已取消</SelectItem>
-            </SelectContent>
-          </Select>
-
-          {/* 起始日期 */}
-          <Input
-            type="date"
-            className="text-xs h-9"
-            value={from}
-            onChange={(e) => onFromChange(e.target.value)}
-            aria-label="起始日期"
-          />
-
-          {onClearFailed && unifiedTasks.some((t) => t.kind === "deployment" && (t.status === "failed" || t.status === "partial")) && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-9 text-muted-foreground hover:text-destructive shrink-0"
-              onClick={onClearFailed}
-              title="一键清空所有历史失败部署记录"
-            >
-              <Trash2 className="mr-1.5 size-3.5" />
-              清空失败记录
-            </Button>
-          )}
-        </div>
-
-        {/* 任务表格 */}
-        <div className="rounded-md border overflow-hidden">
-          <Table className="min-w-[1000px]">
-            <TableHeader className="bg-muted/40">
+        <CardContent className="p-0">
+          <Table className="min-w-[880px]">
+            <TableHeader className="bg-muted/30">
               <TableRow>
-                <TableHead className="w-[85px]">类型</TableHead>
-                <TableHead className="min-w-[200px]">任务对象 / 证书</TableHead>
-                <TableHead className="min-w-[160px]">目标节点 / 阶段</TableHead>
-                <TableHead>触发来源</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>耗时 / 时间</TableHead>
-                <TableHead className="text-right">操作</TableHead>
+                <TableHead className="min-w-[180px] text-xs font-semibold">任务名称</TableHead>
+                <TableHead className="min-w-[200px] text-xs font-semibold">关联证书</TableHead>
+                <TableHead className="min-w-[160px] text-xs font-semibold">目标服务器</TableHead>
+                <TableHead className="w-[100px] text-xs font-semibold">触发来源</TableHead>
+                <TableHead className="w-[90px] text-xs font-semibold">状态</TableHead>
+                <TableHead className="w-[160px] text-xs font-semibold">耗时 / 时间</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredTasks.map((task) => (
-                <TaskRow
-                  key={`${task.kind}-${task.id}`}
-                  task={task}
-                  serverMap={serverMap}
-                  onOpenDeployment={onOpenDeployment}
-                  onOpenSyncJob={onOpenSyncJob}
-                  onDeploymentAction={onDeploymentAction}
-                />
-              ))}
-              {filteredTasks.length === 0 && (
+              {filteredDeployments.map((deployment) => {
+                const isFailed = deployment.status === "failed" || deployment.status === "partial";
+                const duration = formatDuration(deployment.startedAt, deployment.finishedAt);
+                const formattedError = formatTaskError(deployment.errorSummary);
+                const certs = deployment.certificates ?? [];
+                const displayTitle =
+                  deployment.title ??
+                  (deployment.certificateName ? `${deployment.certificateName} 证书部署` : "证书部署");
+
+                return (
+                  <TableRow
+                    key={deployment.id}
+                    onClick={() => onOpenDeployment(deployment.id)}
+                    className={`cursor-pointer ${
+                      isFailed ? "bg-destructive/5 hover:bg-destructive/10" : "hover:bg-muted/40"
+                    }`}
+                  >
+                    <TableCell className="max-w-[260px] break-words">
+                      <div className="text-xs font-medium text-foreground">{displayTitle}</div>
+                      {isFailed && formattedError && (
+                        <div className="mt-1 flex max-w-xs items-start gap-1 rounded bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive">
+                          <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                          <span className="truncate">{formattedError}</span>
+                        </div>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="max-w-[260px]">
+                      {certs.length > 1 ? (
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span className="truncate font-medium text-foreground">{certs[0].name}</span>
+                            <Badge variant="outline" className="border-primary/30 px-1 py-0 text-[10px] font-normal text-primary">
+                              {certs.length} 张
+                            </Badge>
+                          </div>
+                          <div
+                            className="truncate font-mono text-[11px] text-muted-foreground"
+                            title={certs.map((c) => c.domain).join(", ")}
+                          >
+                            {certs.map((c) => c.domain).join(", ")}
+                          </div>
+                        </div>
+                      ) : certs.length === 1 || deployment.certificateName || deployment.domain ? (
+                        <div className="space-y-0.5">
+                          <div className="truncate text-xs font-medium text-foreground">
+                            {certs[0]?.name ?? deployment.certificateName ?? "—"}
+                          </div>
+                          {(certs[0]?.domain ?? deployment.domain) && (
+                            <div className="truncate font-mono text-[11px] text-muted-foreground">
+                              {certs[0]?.domain ?? deployment.domain}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="text-xs">
+                      {deployment.serverIds && deployment.serverIds.length > 0 ? (
+                        <div className="flex max-w-xs flex-wrap gap-1">
+                          {deployment.serverIds.map((sid) => (
+                            <Badge
+                              key={sid}
+                              variant="secondary"
+                              className="max-w-[160px] px-1.5 py-0 text-[10px] font-normal"
+                            >
+                              <span className="truncate" title={serverMap.get(sid) ?? sid}>
+                                {serverMap.get(sid) ?? sid.slice(0, 8)}
+                              </span>
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">全部节点</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                      {triggerLabels[deployment.trigger] ?? deployment.trigger}
+                    </TableCell>
+
+                    <TableCell>
+                      <StatusBadge status={deployment.status} />
+                    </TableCell>
+
+                    <TableCell className="whitespace-nowrap text-xs">
+                      <div className="text-foreground">{formatActivityDate(deployment.createdAt)}</div>
+                      {duration && (
+                        <div className="font-mono text-[11px] text-muted-foreground">
+                          耗时 {duration}
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+
+              {filteredDeployments.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={6}
                     className="h-28 text-center text-xs text-muted-foreground"
                   >
-                    没有找到符合条件的任务记录
+                    没有找到符合条件的部署记录
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+
+      <Dialog open={confirmClearOpen} onOpenChange={setConfirmClearOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">确认清空失败记录？</DialogTitle>
+            <DialogDescription className="pt-1 text-xs">
+              将删除全部 <strong className="text-foreground">{failedDeploymentCount} 条</strong>{" "}
+              历史失败部署记录及其对应日志，且不可恢复。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" size="sm" onClick={() => setConfirmClearOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                setConfirmClearOpen(false);
+                onClearFailed?.();
+              }}
+            >
+              确认清空
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
-function TaskRow({
-  task,
-  serverMap,
-  onOpenDeployment,
-  onOpenSyncJob,
-  onDeploymentAction,
-}: {
-  task: UnifiedTask;
-  serverMap: Map<string, string>;
-  onOpenDeployment: (id: string) => void;
+type SyncJobHistoryProps = {
+  certificates: Certificate[];
+  syncJobs: SyncJobItem[];
+  certificateId: string;
+  status: string;
+  from: string;
+  onCertificateChange: (id: string) => void;
+  onStatusChange: (status: string) => void;
+  onFromChange: (value: string) => void;
   onOpenSyncJob: (id: string) => void;
-  onDeploymentAction: (id: string, action: "retry" | "cancel") => void;
-}) {
-  const isTerminal = terminalStatuses.has(task.status);
-  const isFailed = task.status === "failed" || task.status === "partial";
-  const duration = formatDuration(task.startedAt, task.finishedAt);
+};
+
+export function SyncJobHistory({
+  certificates,
+  syncJobs,
+  certificateId,
+  status,
+  from,
+  onCertificateChange,
+  onStatusChange,
+  onFromChange,
+  onOpenSyncJob,
+}: SyncJobHistoryProps) {
+  const [keyword, setKeyword] = useState("");
+
+  const certDomainMap = useMemo(
+    () => new Map(certificates.map((c) => [c.id, c.domain])),
+    [certificates]
+  );
+
+  const filteredJobs = useMemo(() => {
+    const sorted = [...syncJobs].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    const kw = keyword.trim().toLowerCase();
+
+    return sorted.filter((job) => {
+      if (certificateId && job.certificateId !== certificateId) return false;
+      if (!matchesStatusFilter(job.status, status)) return false;
+      if (!matchesFromDate(job.createdAt, from)) return false;
+
+      if (kw) {
+        const domain = certDomainMap.get(job.certificateId) ?? "";
+        const matchesName = job.certificateName.toLowerCase().includes(kw);
+        const matchesDomain = domain.toLowerCase().includes(kw);
+        const matchesErr = job.errorSummary?.toLowerCase().includes(kw) ?? false;
+        if (!matchesName && !matchesDomain && !matchesErr) return false;
+      }
+      return true;
+    });
+  }, [syncJobs, certificateId, status, from, keyword, certDomainMap]);
+
+  const hasActiveFilters = Boolean(keyword || certificateId || status || from);
+
+  const resetFilters = () => {
+    setKeyword("");
+    onCertificateChange("");
+    onStatusChange("");
+    onFromChange("");
+  };
 
   return (
-    <TableRow className={isFailed ? "bg-destructive/5 hover:bg-destructive/10" : ""}>
-      {/* 类型 Badge */}
-      <TableCell className="font-medium text-xs">
-        {task.kind === "deployment" ? (
-          <Badge
-            variant="outline"
-            className="border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[11px]"
-          >
-            部署
-          </Badge>
-        ) : (
-          <Badge
-            variant="outline"
-            className="border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-400 text-[11px]"
-          >
-            同步
-          </Badge>
-        )}
-      </TableCell>
+    <Card>
+      <CardHeader className="space-y-3 border-b px-4 py-3.5">
+        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="grid flex-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="搜索证书/域名/错误…"
+                className="h-8 pl-8 text-xs"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+              />
+            </div>
 
-      {/* 任务对象 / 证书 */}
-      <TableCell className="max-w-[320px] break-words">
-        <div className="font-medium text-xs text-foreground flex items-center gap-1.5 flex-wrap">
-          <span>{task.title ?? task.certificateName ?? "未命名任务"}</span>
-          {task.rawDeployment?.certificates && task.rawDeployment.certificates.length > 1 && (
-            <Badge variant="outline" className="text-[10px] text-primary border-primary/30 py-0 px-1 font-normal">
-              {task.rawDeployment.certificates.length} 张证书
-            </Badge>
-          )}
-        </div>
-        {task.rawDeployment?.certificates && task.rawDeployment.certificates.length > 1 ? (
-          <div className="text-[11px] text-muted-foreground font-mono truncate max-w-sm" title={task.rawDeployment.certificates.map((c) => c.domain).join(", ")}>
-            {task.rawDeployment.certificates.map((c) => c.domain).join(", ")}
-          </div>
-        ) : task.domain ? (
-          <div className="break-all text-[11px] text-muted-foreground font-mono">
-            {task.domain}
-          </div>
-        ) : null}
-        {/* 若任务失败，直接醒目展示错误摘要，无需多次点击 */}
-        {isFailed && task.errorSummary && (
-          <div className="mt-1 flex items-start gap-1 text-[11px] text-destructive bg-destructive/10 px-2 py-0.5 rounded max-w-md">
-            <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
-            <span className="truncate">{task.errorSummary}</span>
-          </div>
-        )}
-      </TableCell>
-
-      {/* 目标节点 / 阶段 */}
-      <TableCell className="text-xs">
-        {task.kind === "deployment" ? (
-          <div>
-            {task.serverIds && task.serverIds.length > 0 ? (
-              <div className="flex flex-wrap gap-1 max-w-xs">
-                {task.serverIds.map((sid) => (
-                  <Badge
-                    key={sid}
-                    variant="secondary"
-                    className="max-w-[160px] text-[10px] font-normal px-1.5 py-0"
-                  >
-                    <span className="truncate" title={serverMap.get(sid) ?? sid}>
-                      {serverMap.get(sid) ?? sid.slice(0, 8)}
-                    </span>
-                  </Badge>
-                ))}
-              </div>
-            ) : (
-              <span className="text-muted-foreground">全部受管节点</span>
-            )}
-          </div>
-        ) : (
-          <div className="text-muted-foreground text-[11px]">
-            {task.phase ? `阶段: ${task.phase}` : "ohttps 远端同步"}
-          </div>
-        )}
-      </TableCell>
-
-      {/* 触发来源 */}
-      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-        {triggerLabels[task.trigger] ?? task.trigger}
-      </TableCell>
-
-      {/* 状态 */}
-      <TableCell>
-        <Badge
-          variant={
-            task.status === "succeeded"
-              ? "default"
-              : isFailed
-              ? "destructive"
-              : "secondary"
-          }
-          className="text-[11px]"
-        >
-          {statusLabels[task.status] ?? task.status}
-        </Badge>
-      </TableCell>
-
-      {/* 耗时与时间 */}
-      <TableCell className="whitespace-nowrap text-xs">
-        <div className="text-foreground">{formatActivityDate(task.createdAt)}</div>
-        {duration && (
-          <div className="text-[11px] text-muted-foreground font-mono">
-            耗时 {duration}
-          </div>
-        )}
-      </TableCell>
-
-      {/* 操作按钮 */}
-      <TableCell className="text-right">
-        <div className="flex items-center justify-end gap-1">
-          {task.kind === "deployment" ? (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => onOpenDeployment(task.id)}
-              >
-                详情
-              </Button>
-              {!isTerminal && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
-                  onClick={() => onDeploymentAction(task.id, "cancel")}
-                >
-                  <Ban className="size-3 mr-1" />
-                  取消
-                </Button>
-              )}
-              {isTerminal && isFailed && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-xs text-primary hover:bg-primary/10"
-                  onClick={() => onDeploymentAction(task.id, "retry")}
-                >
-                  <RotateCcw className="size-3 mr-1" />
-                  重试
-                </Button>
-              )}
-            </>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => onOpenSyncJob(task.id)}
+            <Select
+              value={certificateId || "all"}
+              onValueChange={(val) => onCertificateChange(val === "all" ? "" : val)}
             >
-              查看
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder="按证书筛选" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">所有证书</SelectItem>
+                {certificates.map((cert) => (
+                  <SelectItem key={cert.id} value={cert.id}>
+                    {cert.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={status || "all"}
+              onValueChange={(val) => onStatusChange(val === "all" ? "" : val)}
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder="按状态筛选" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">所有状态</SelectItem>
+                <SelectItem value="failed">仅看异常 / 失败</SelectItem>
+                <SelectItem value="running">运行中 / 排队中</SelectItem>
+                <SelectItem value="succeeded">成功</SelectItem>
+                <SelectItem value="cancelled">已取消</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Input
+              type="date"
+              className="h-8 text-xs"
+              value={from}
+              onChange={(e) => onFromChange(e.target.value)}
+              aria-label="起始日期"
+            />
+          </div>
+
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 shrink-0 gap-1 self-start px-2 text-xs text-muted-foreground hover:text-foreground lg:self-auto"
+              onClick={resetFilters}
+            >
+              <X className="size-3.5" />
+              重置
             </Button>
           )}
         </div>
-      </TableCell>
-    </TableRow>
+      </CardHeader>
+
+      <CardContent className="p-0">
+        <Table className="min-w-[820px]">
+          <TableHeader className="bg-muted/30">
+            <TableRow>
+              <TableHead className="min-w-[200px] text-xs font-semibold">证书名称</TableHead>
+              <TableHead className="min-w-[180px] text-xs font-semibold">绑定域名</TableHead>
+              <TableHead className="w-[140px] text-xs font-semibold">同步阶段</TableHead>
+              <TableHead className="w-[100px] text-xs font-semibold">触发来源</TableHead>
+              <TableHead className="w-[90px] text-xs font-semibold">状态</TableHead>
+              <TableHead className="w-[160px] text-xs font-semibold">耗时 / 时间</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filteredJobs.map((job) => {
+              const isFailed = job.status === "failed";
+              const duration = formatDuration(job.startedAt, job.finishedAt);
+              const formattedError = formatTaskError(job.errorSummary);
+              const domain = certDomainMap.get(job.certificateId);
+
+              return (
+                <TableRow
+                  key={job.id}
+                  onClick={() => onOpenSyncJob(job.id)}
+                  className={`cursor-pointer ${
+                    isFailed ? "bg-destructive/5 hover:bg-destructive/10" : "hover:bg-muted/40"
+                  }`}
+                >
+                  <TableCell className="max-w-[280px] break-words">
+                    <div className="text-xs font-medium text-foreground">{job.certificateName}</div>
+                    {isFailed && formattedError && (
+                      <div className="mt-1 flex max-w-xs items-start gap-1 rounded bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive">
+                        <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                        <span className="truncate">{formattedError}</span>
+                      </div>
+                    )}
+                  </TableCell>
+
+                  <TableCell className="max-w-[220px] truncate font-mono text-xs text-muted-foreground">
+                    {domain ?? "—"}
+                  </TableCell>
+
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                    {job.phase ? syncPhaseLabels[job.phase] ?? job.phase : "—"}
+                  </TableCell>
+
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                    {triggerLabels[job.trigger] ?? job.trigger}
+                  </TableCell>
+
+                  <TableCell>
+                    <StatusBadge status={job.status} />
+                  </TableCell>
+
+                  <TableCell className="whitespace-nowrap text-xs">
+                    <div className="text-foreground">{formatActivityDate(job.createdAt)}</div>
+                    {duration && (
+                      <div className="font-mono text-[11px] text-muted-foreground">
+                        耗时 {duration}
+                      </div>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+
+            {filteredJobs.length === 0 && (
+              <TableRow>
+                <TableCell
+                  colSpan={6}
+                  className="h-28 text-center text-xs text-muted-foreground"
+                >
+                  没有找到符合条件的同步记录
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }

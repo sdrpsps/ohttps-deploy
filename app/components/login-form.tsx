@@ -1,20 +1,17 @@
 "use client";
 
 import { FormEvent, useId, useState } from "react";
-import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, LoaderCircle, Lock, ShieldCheck, User } from "lucide-react";
+import { AlertCircle, ArrowRight, Eye, EyeOff, KeyRound, LoaderCircle, Lock, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 
 export function LoginForm({
   className,
@@ -75,25 +72,15 @@ export function LoginForm({
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card className="border-border/80 shadow-2xl shadow-primary/5 backdrop-blur-sm">
-        <CardHeader className="space-y-3 pb-6 text-center">
-          <div className="mx-auto flex size-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 shadow-inner">
-            <img src="/ohttps-deploy-logo.png" alt="OHTTPS Deploy" width={36} height={36} className="drop-shadow-sm" />
+      <Card className="border-border/80 shadow-xl shadow-primary/5 backdrop-blur-sm">
+        <CardHeader className="space-y-3 pb-4 text-center">
+          <div className="mx-auto flex size-12 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
+            <img src="/ohttps-deploy-logo.png" alt="OHTTPS Deploy" width={30} height={30} />
           </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-center gap-2">
-              <CardTitle className="text-xl font-bold tracking-tight">OHTTPS Deploy</CardTitle>
-              <Badge variant="outline" className="border-primary/30 bg-primary/5 text-[11px] text-primary">
-                控制台
-              </Badge>
-            </div>
-            <CardDescription className="text-xs">
-              证书全生命周期自动化管理与安全部署平台
-            </CardDescription>
-          </div>
+          <CardTitle className="text-lg font-bold tracking-tight">OHTTPS Deploy</CardTitle>
         </CardHeader>
 
-        <CardContent>
+        <CardContent className="pb-6">
           {pocketIdEnabled && (
             <div className="space-y-3">
               <Button type="button" className="w-full gap-2" disabled={isSubmitting || isPocketIdSubmitting} onClick={signInPocketId}>
@@ -175,7 +162,7 @@ export function LoginForm({
               </div>
             </div>
 
-            <Button type="submit" className="w-full gap-2 shadow-sm font-medium" disabled={isSubmitting || isPocketIdSubmitting}>
+            <Button type="submit" className="w-full gap-2 font-medium shadow-sm" disabled={isSubmitting || isPocketIdSubmitting}>
               {isSubmitting ? (
                 <>
                   <LoaderCircle className="size-4 animate-spin" />
@@ -183,20 +170,13 @@ export function LoginForm({
                 </>
               ) : (
                 <>
-                  进入管理控制台
+                  登录
                   <ArrowRight className="size-4" />
                 </>
               )}
             </Button>
           </form>
         </CardContent>
-
-        <CardFooter className="border-t border-border/50 bg-muted/20 px-6 py-4">
-          <div className="flex w-full items-center justify-center gap-2 text-[11px] text-muted-foreground">
-            <ShieldCheck className="size-3.5 text-primary" />
-            <span>自托管证书控制台 · 本地数据卷权限安全隔离保护</span>
-          </div>
-        </CardFooter>
       </Card>
     </div>
   );

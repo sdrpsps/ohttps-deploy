@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  FileText,
-  Layers,
+  RefreshCw,
+  Send,
   ShieldCheck,
   Terminal,
 } from "lucide-react";
@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ActivityMetrics } from "@/components/activity/activity-metrics";
 import { DashboardSkeleton } from "@/components/console/dashboard-skeleton";
 import { DeploymentDetailSheet } from "@/components/activity/deployment-detail-sheet";
-import { TaskHistory } from "@/components/activity/task-history";
+import { DeploymentHistory, SyncJobHistory } from "@/components/activity/task-history";
 import {
   AuditTrailViewer,
   SystemLogViewer,
@@ -43,7 +43,7 @@ export function ActivityPanel({
   onViewSyncJob,
 }: ActivityPanelProps) {
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState("tasks");
+  const [activeTab, setActiveTab] = useState("deployments");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [certificateId, setCertificateId] = useState("");
   const [serverId, setServerId] = useState("");
@@ -63,7 +63,8 @@ export function ActivityPanel({
     if (st) setStatus(st);
     if (certId) setCertificateId(certId);
     if (srvId) setServerId(srvId);
-    if (tab && ["tasks", "logs", "audit"].includes(tab)) setActiveTab(tab);
+    if (tab === "tasks") setActiveTab("deployments");
+    else if (tab && ["deployments", "sync", "logs", "audit"].includes(tab)) setActiveTab(tab);
   }, []);
 
   const logsQueryParam = useMemo(
@@ -289,41 +290,54 @@ export function ActivityPanel({
         syncJobs={syncJobs}
         auditEvents={auditEvents}
         onFilterFailed={() => {
-          setActiveTab("tasks");
+          const hasFailedDeployments = deployments.some(
+            (d) => d.status === "failed" || d.status === "partial"
+          );
+          const hasFailedSyncs = syncJobs.some((s) => s.status === "failed");
+          setActiveTab(hasFailedDeployments || !hasFailedSyncs ? "deployments" : "sync");
           setStatus("failed");
         }}
         onFilterActive={() => {
-          setActiveTab("tasks");
+          const hasActiveDeployments = deployments.some(
+            (d) => d.status === "running" || d.status === "queued"
+          );
+          const hasActiveSyncs = syncJobs.some(
+            (s) => s.status === "running" || s.status === "queued"
+          );
+          setActiveTab(hasActiveDeployments || !hasActiveSyncs ? "deployments" : "sync");
           setStatus("running");
         }}
       />
 
-      {/* 2. 标签页组织：任务中心 / 系统日志 / 操作审计 */}
+      {/* 2. 标签页组织：部署任务 / 证书同步 / 系统日志 / 操作审计 */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <TabsList className="grid w-full sm:w-auto grid-cols-3">
-            <TabsTrigger value="tasks" className="flex items-center gap-1.5 text-xs">
-              <Layers className="size-3.5" />
-              任务中心
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TabsList className="grid h-auto w-full grid-cols-2 justify-start gap-1 sm:inline-flex sm:h-10 sm:w-auto sm:justify-start">
+            <TabsTrigger value="deployments" className="flex items-center justify-start gap-1.5 text-left text-xs">
+              <Send className="size-3.5 shrink-0" />
+              部署任务 ({deployments.length})
             </TabsTrigger>
-            <TabsTrigger value="logs" className="flex items-center gap-1.5 text-xs">
-              <Terminal className="size-3.5" />
+            <TabsTrigger value="sync" className="flex items-center justify-start gap-1.5 text-left text-xs">
+              <RefreshCw className="size-3.5 shrink-0" />
+              证书同步 ({syncJobs.length})
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="flex items-center justify-start gap-1.5 text-left text-xs">
+              <Terminal className="size-3.5 shrink-0" />
               系统日志
             </TabsTrigger>
-            <TabsTrigger value="audit" className="flex items-center gap-1.5 text-xs">
-              <ShieldCheck className="size-3.5" />
+            <TabsTrigger value="audit" className="flex items-center justify-start gap-1.5 text-left text-xs">
+              <ShieldCheck className="size-3.5 shrink-0" />
               操作审计
             </TabsTrigger>
           </TabsList>
         </div>
 
-        {/* 标签 1: 任务中心 */}
-        <TabsContent value="tasks" className="mt-0 space-y-4">
-          <TaskHistory
+        {/* 标签 1: 部署任务 */}
+        <TabsContent value="deployments" className="mt-0 space-y-4">
+          <DeploymentHistory
             certificates={certificates}
             servers={servers}
             deployments={deployments}
-            syncJobs={syncJobs}
             certificateId={certificateId}
             serverId={serverId}
             status={status}
@@ -333,9 +347,22 @@ export function ActivityPanel({
             onStatusChange={setStatus}
             onFromChange={setFrom}
             onOpenDeployment={(id) => setSelectedId(id)}
-            onOpenSyncJob={(id) => onViewSyncJob?.(id)}
-            onDeploymentAction={(id, name) => void action(id, name)}
             onClearFailed={() => void clearFailedDeployments()}
+          />
+        </TabsContent>
+
+        {/* 标签 2: 证书同步 */}
+        <TabsContent value="sync" className="mt-0 space-y-4">
+          <SyncJobHistory
+            certificates={certificates}
+            syncJobs={syncJobs}
+            certificateId={certificateId}
+            status={status}
+            from={from}
+            onCertificateChange={setCertificateId}
+            onStatusChange={setStatus}
+            onFromChange={setFrom}
+            onOpenSyncJob={(id) => onViewSyncJob?.(id)}
           />
         </TabsContent>
 
@@ -343,8 +370,23 @@ export function ActivityPanel({
         <TabsContent value="logs" className="mt-0 space-y-4">
           <SystemLogViewer
             logs={logs}
+            certificates={certificates}
+            servers={servers}
+            certificateId={certificateId}
+            serverId={serverId}
             level={logLevel}
+            from={from}
+            onCertificateChange={setCertificateId}
+            onServerChange={setServerId}
             onLevelChange={setLogLevel}
+            onFromChange={setFrom}
+            onOpenDeployment={(id) => setSelectedId(id)}
+            onResetFilters={() => {
+              setCertificateId("");
+              setServerId("");
+              setLogLevel("");
+              setFrom("");
+            }}
           />
         </TabsContent>
 

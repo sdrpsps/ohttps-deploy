@@ -67,15 +67,15 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const currentUser = sessionQuery.data?.user;
   const canChangePassword = currentUser?.username === "admin";
 
-  const certificatesQuery = useQuery({ queryKey: queryKeys.certificates, queryFn: () => getApiData<Certificate[]>("/api/certificates"), enabled: ["overview", "certificates", "policies", "activity"].includes(section) });
-  const serversQuery = useQuery({ queryKey: queryKeys.servers, queryFn: () => getApiData<ManagedServer[]>("/api/servers"), enabled: ["overview", "servers", "policies", "activity"].includes(section) });
+  const certificatesQuery = useQuery({ queryKey: queryKeys.certificates, queryFn: () => getApiData<Certificate[]>("/api/certificates"), enabled: ["overview", "certificates", "policies", "activity", "notifications"].includes(section) });
+  const serversQuery = useQuery({ queryKey: queryKeys.servers, queryFn: () => getApiData<ManagedServer[]>("/api/servers"), enabled: ["overview", "certificates", "servers", "policies", "activity", "notifications"].includes(section) });
   const settingsQuery = useQuery({ queryKey: queryKeys.settings, queryFn: () => getApiData<SettingsSummary>("/api/settings") });
   const policiesQuery = useQuery({ queryKey: queryKeys.policies, queryFn: () => getApiData<PoliciesData>("/api/deployment-policies"), enabled: ["overview", "certificates", "policies"].includes(section) });
   const healthQuery = useQuery({ queryKey: queryKeys.health, queryFn: () => getApiData<{ worker: boolean }>("/api/health") });
   const deploymentsQuery = useQuery({
     queryKey: queryKeys.deployments,
-    queryFn: () => getApiData<Array<{ id: string; certificateId?: string | null; certificates?: Array<{ id: string }>; status: string }>>("/api/deployments"),
-    enabled: ["overview", "activity"].includes(section),
+    queryFn: () => getApiData<Array<{ id: string; title?: string | null; certificateId?: string | null; certificateName?: string | null; domain?: string | null; certificates?: Array<{ id: string }>; status: string }>>("/api/deployments"),
+    enabled: ["overview", "activity", "notifications"].includes(section),
     refetchInterval: (query) => {
       const deps = query.state.data;
       return deps?.some((d) => d.status === "queued" || d.status === "running") ? 3_000 : false;
@@ -157,7 +157,7 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
   const loading = [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery].some((query) => query.isLoading);
   const pageLoading = {
     overview: [certificatesQuery, serversQuery, settingsQuery, policiesQuery, healthQuery, deploymentsQuery, syncJobsQuery],
-    certificates: [certificatesQuery, settingsQuery, syncJobsQuery],
+    certificates: [certificatesQuery, serversQuery, settingsQuery, policiesQuery, syncJobsQuery],
     servers: [serversQuery],
     policies: [certificatesQuery, serversQuery, policiesQuery],
     activity: [certificatesQuery, serversQuery, deploymentsQuery, syncJobsQuery],
@@ -320,6 +320,32 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     if (deleted) setDeleteTarget(null);
   }
 
+  async function testServerConnection(server: ManagedServer): Promise<boolean> {
+    try {
+      const response = await fetch(`/api/servers/${server.id}/test-connection`, { method: "POST" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        toast.error(body?.error?.message ?? body?.data?.error ?? "连接测试失败");
+        return false;
+      }
+      toast.success(`${server.name} 连接成功，主机指纹已校验。`);
+      return true;
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "连接测试失败");
+      return false;
+    }
+  }
+
+  async function toggleCertificateStatus(certificate: Certificate) {
+    const nextStatus = certificate.status === "active" ? "disabled" : "active";
+    await save(
+      `/api/certificates/${certificate.id}`,
+      { status: nextStatus },
+      `已${nextStatus === "active" ? "启用" : "停用"}证书 ${certificate.name}`,
+      "PATCH"
+    );
+  }
+
   async function toggleServerEnabled(server: ManagedServer) {
     const nextEnabled = !server.enabled;
     const updated = await save(
@@ -406,14 +432,17 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     certificates: (
       <CertificatePanel
         certificates={certificates}
+        servers={servers}
+        policies={policiesQuery.data?.policies ?? []}
         jobs={syncJobs}
-        loading={loading}
+        loading={certificatesQuery.isLoading}
         busy={busy}
         onCreate={() => openCertificateDialog()}
         onEdit={openCertificateDialog}
-        onRefresh={(id) => void refreshCertificate(id)}
-        onDeploy={(id) => void deployCertificate(id)}
-        onDeployAll={() => void deployAllCertificates()}
+        onRefresh={(id) => refreshCertificate(id)}
+        onDeploy={(id) => deployCertificate(id)}
+        onDeployAll={() => deployAllCertificates()}
+        onToggleStatus={(cert) => toggleCertificateStatus(cert)}
         onDelete={setDeleteTarget}
         ohttpsConfigured={settings?.ohttpsConfigured ?? false}
         onViewSyncJob={openSyncTask}
@@ -423,15 +452,15 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
     servers: (
       <ServerPanel
         servers={servers}
-        loading={loading}
+        loading={serversQuery.isLoading}
         busy={busy}
         onCreate={() => openServerDialog()}
         onEdit={openServerDialog}
-        onTest={(server) => void runAction(`/api/servers/${server.id}/test-connection`, "POST", `${server.name} 连接成功，主机指纹已校验。`)}
+        onTest={(server) => testServerConnection(server)}
         onDelete={setDeleteTarget}
-        onToggleEnabled={(server) => void toggleServerEnabled(server)}
+        onToggleEnabled={(server) => toggleServerEnabled(server)}
         onViewSshKey={() => setKeyDialogOpen(true)}
-        onDeployServer={(server) => void deployServer(server)}
+        onDeployServer={(server) => deployServer(server)}
       />
     ),
     policies: <PoliciesPanel certificates={certificates} servers={servers} />,
@@ -443,7 +472,14 @@ export default function Dashboard({ section = "overview" }: { section?: Dashboar
         onViewSyncJob={openSyncTask}
       />
     ),
-    notifications: <NotificationPanel />,
+    notifications: (
+      <NotificationPanel
+        certificates={certificates}
+        deployments={deploymentsQuery.data ?? []}
+        webhookConfigured={Boolean(settings?.webhookUrl)}
+        onConfigureSettings={() => setSettingsDialogOpen(true)}
+      />
+    ),
   } satisfies Record<DashboardSection, React.ReactNode>;
 
   return (

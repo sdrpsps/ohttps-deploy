@@ -76,6 +76,71 @@ export function formatActivityDate(value: string) {
   }).format(new Date(value));
 }
 
+export function formatLogTime(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Shanghai",
+  }).format(new Date(value));
+}
+
+export const syncPhaseLabels: Record<string, string> = {
+  queued: "排队等待",
+  checking: "检查本地版本",
+  quota: "检查 API 额度",
+  fetching: "拉取远端证书",
+  validating: "校验证书与域名",
+  saving: "保存新版本",
+  deploying: "触发自动部署",
+  succeeded: "同步完成",
+  failed: "同步失败",
+  cancelled: "已取消",
+};
+
+export function formatTaskError(error: string | null | undefined): string | null {
+  if (!error) return null;
+  const trimmed = error.trim();
+  const targetFailMatch = trimmed.match(/^(\d+)\s+target\(s\)\s+failed$/i);
+  if (targetFailMatch) return `${targetFailMatch[1]} 台服务器部署失败`;
+
+  const exactMap: Record<string, string> = {
+    "ohttps daily call limit reached": "已达到每日 ohttps API 调用上限",
+    "ohttps credentials are not configured": "未配置 ohttps API 凭据",
+    "shared SSH private key is not configured": "未配置共享 SSH 私钥",
+    "no deployment targets configured": "未配置部署目标服务器",
+    "no valid certificates found for deployment": "未找到有效的待部署证书",
+    "automatic deployment policy no longer applies": "自动部署策略已不再适用",
+    "certificate is unavailable or disabled": "证书不存在或已停用",
+    "worker lease lost or stopping": "Worker 停止或租约失效，任务已中断",
+    "upstream certificate expires before the current certificate": "远端证书有效期早于当前本地版本",
+    cancelled: "任务已取消",
+  };
+  return exactMap[trimmed] ?? trimmed;
+}
+
+export function parseServerLogPrefix(message: string): { serverPrefix: string | null; body: string } {
+  const match = message.match(/^\[([^\]]+)\]\s*(.*)$/);
+  if (!match) return { serverPrefix: null, body: message };
+  return { serverPrefix: match[1], body: match[2] };
+}
+
+export type LogTone = "error" | "warn" | "success" | "progress" | "info";
+
+export function classifyLogTone(level: string, message: string): LogTone {
+  if (level === "error") return "error";
+  if (level === "warn") return "warn";
+  const { body } = parseServerLogPrefix(message);
+  if (/^(?:正在|开始|准备|等待)/.test(body) || body.endsWith("...") || body.endsWith("…")) {
+    return "progress";
+  }
+  if (/(?:成功|通过|完成|已替换|已恢复|无需更新|已设置|一致)/.test(body)) {
+    return "success";
+  }
+  return "info";
+}
+
 export function formatRelativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   if (diff < 60_000) return "刚刚";
