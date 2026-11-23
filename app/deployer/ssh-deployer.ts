@@ -135,10 +135,13 @@ export class SSHDeployer implements Deployer {
       await options.onProgress?.("replacing", "正在备份现有证书并执行原子替换...");
       const targetDirs = [...new Set(items.flatMap((item) => [posix.dirname(item.destCert), posix.dirname(item.destKey)]))];
       await this.exec(client, `mkdir -p -- ${targetDirs.map(shellQuote).join(" ")}`, commandOptions);
-      for (const item of items) {
-        await this.exec(client, backupCommand(item.destCert, item.backupCert, item.missingCert), commandOptions);
-        await this.exec(client, backupCommand(item.destKey, item.backupKey, item.missingKey), commandOptions);
-      }
+      const backupCmd = items
+        .flatMap((item) => [
+          backupCommand(item.destCert, item.backupCert, item.missingCert),
+          backupCommand(item.destKey, item.backupKey, item.missingKey),
+        ])
+        .join(" && ");
+      await this.exec(client, backupCmd, commandOptions);
       replacementStarted = true;
       const mvCmd = items.map((item) => `mv ${shellQuote(item.tempCert)} ${shellQuote(item.destCert)} && mv ${shellQuote(item.tempKey)} ${shellQuote(item.destKey)}`).join(" && ");
       await this.exec(client, mvCmd, commandOptions);
