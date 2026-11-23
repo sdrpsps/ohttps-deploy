@@ -18,7 +18,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
-RUN apk add --no-cache su-exec && addgroup -S app && adduser -S app -G app
+RUN apk add --no-cache su-exec \
+  && deluser node \
+  && rm -rf /home/node \
+  && addgroup -g 1000 app \
+  && adduser -D -H -s /sbin/nologin -u 1000 -G app app
 COPY --chown=app:app --from=build /app/.next/standalone ./
 COPY --chown=app:app --from=build /app/.next/static ./.next/static
 COPY --chown=app:app --from=build /app/public ./public
